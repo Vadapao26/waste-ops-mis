@@ -107,7 +107,7 @@ QUERY_LIBRARY = {
             SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END) AS total_non_valuables_kg,
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity))::numeric,0),2) AS non_valuables_pct,
             ROUND(SUM(value_of_accepted_material)::numeric,2) AS total_material_value,
-            ROUND(SUM(COALESCE(transportation_cost,0)),2) AS total_transportation_cost,
+            ROUND((SUM(COALESCE(transportation_cost,0)))::numeric,2) AS total_transportation_cost,
             ROUND(SUM(net_procurement_cost)::numeric,2) AS total_net_procurement_cost
         FROM inward {FACILITY_FILTER};""",
 
@@ -118,7 +118,7 @@ QUERY_LIBRARY = {
             SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity))::numeric,0),2) AS valuables_pct,
             ROUND(SUM(value_of_accepted_material)::numeric,2) AS material_value,
-            ROUND(SUM(COALESCE(transportation_cost,0)),2) AS transportation_cost,
+            ROUND((SUM(COALESCE(transportation_cost,0)))::numeric,2) AS transportation_cost,
             ROUND(SUM(net_procurement_cost)::numeric,2) AS net_procurement_cost
         FROM inward {FACILITY_FILTER}
         GROUP BY month,facility,vendor ORDER BY month DESC,total_received_kg DESC;""",
@@ -136,9 +136,9 @@ QUERY_LIBRARY = {
 
     "production: kpi summary": """
         SELECT
-            ROUND(SUM(CASE WHEN LOWER(process_equipment) LIKE '%sort%' THEN material_quantity ELSE 0 END),2) AS total_sorted_kg,
-            ROUND(SUM(CASE WHEN LOWER(process_equipment) LIKE '%bag%' THEN material_quantity ELSE 0 END),2) AS total_bagged_kg,
-            ROUND(SUM(CASE WHEN LOWER(process_equipment) LIKE '%bail%' OR LOWER(process_equipment) LIKE '%bale%' THEN material_quantity ELSE 0 END),2) AS total_bailed_kg,
+            ROUND((SUM(CASE WHEN LOWER(process_equipment) LIKE '%sort%' THEN material_quantity ELSE 0 END))::numeric,2) AS total_sorted_kg,
+            ROUND((SUM(CASE WHEN LOWER(process_equipment) LIKE '%bag%' THEN material_quantity ELSE 0 END))::numeric,2) AS total_bagged_kg,
+            ROUND((SUM(CASE WHEN LOWER(process_equipment) LIKE '%bail%' OR LOWER(process_equipment) LIKE '%bale%' THEN material_quantity ELSE 0 END))::numeric,2) AS total_bailed_kg,
             ROUND(SUM(material_quantity)::numeric,2) AS total_processed_kg,
             COUNT(DISTINCT production_code) AS total_runs,
             COUNT(DISTINCT date::date) AS days_operated
@@ -150,8 +150,8 @@ QUERY_LIBRARY = {
             ROUND(SUM(material_quantity)::numeric,2) AS total_qty_processed_kg,
             ROUND(AVG(no_of_staff_present)::numeric,1) AS avg_staff,
             COUNT(DISTINCT date::date) AS days_operated,
-            ROUND(SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0),2) AS efficiency_per_day,
-            ROUND(SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0),2) AS efficiency_per_hour
+            ROUND((SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0))::numeric,2) AS efficiency_per_day,
+            ROUND((SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0))::numeric,2) AS efficiency_per_hour
         FROM production {FACILITY_FILTER}
         GROUP BY month,facility,process_equipment ORDER BY month DESC,total_qty_processed_kg DESC;""",
 
@@ -160,8 +160,8 @@ QUERY_LIBRARY = {
             COUNT(DISTINCT production_code) AS total_runs,
             ROUND(SUM(material_quantity)::numeric,2) AS total_qty_processed_kg,
             ROUND(AVG(no_of_staff_present)::numeric,1) AS avg_staff,
-            ROUND(SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0),2) AS efficiency_per_day,
-            ROUND(SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0),2) AS efficiency_per_hour
+            ROUND((SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0))::numeric,2) AS efficiency_per_day,
+            ROUND((SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0))::numeric,2) AS efficiency_per_hour
         FROM production {FACILITY_FILTER}
         GROUP BY month,facility,shift ORDER BY month DESC,efficiency_per_day DESC;""",
 
@@ -169,8 +169,8 @@ QUERY_LIBRARY = {
         SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, process_equipment, shift,
             COUNT(DISTINCT production_code) AS total_runs,
             ROUND(SUM(material_quantity)::numeric,2) AS total_qty_processed_kg,
-            ROUND(SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0),2) AS efficiency_per_day,
-            ROUND(SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0),2) AS efficiency_per_hour
+            ROUND((SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0))::numeric,2) AS efficiency_per_day,
+            ROUND((SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0))::numeric,2) AS efficiency_per_hour
         FROM production {FACILITY_FILTER}
         GROUP BY month,facility,process_equipment,shift ORDER BY month DESC,process_equipment;""",
 
@@ -180,7 +180,7 @@ QUERY_LIBRARY = {
             ROUND(SUM(total_material_kg)::numeric,2) AS total_material_kg,
             SUM(paid_trips) AS paid_trips,
             ROUND(SUM(total_transport_cost)::numeric,2) AS total_transport_cost,
-            ROUND(SUM(total_transport_cost)/NULLIF(SUM(material_at_cost),0),2) AS rate_per_kg
+            ROUND((SUM(total_transport_cost)/NULLIF(SUM(material_at_cost),0))::numeric,2) AS rate_per_kg
         FROM (
             SELECT facility, vehicle_vendor_name AS transport_vendor, vehicle_number,
                 COUNT(DISTINCT inward_code) AS total_trips, COUNT(DISTINCT inward_code) AS inward_trips, 0 AS outward_trips,
@@ -253,9 +253,9 @@ QUERY_LIBRARY = {
         SELECT SUM(dispatched_quantity) AS total_dispatched_kg, SUM(accepted_quantity) AS total_accepted_kg,
             ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(dispatched_quantity))::numeric,0),2) AS rejection_pct,
             ROUND(SUM(value_of_accepted_material)::numeric,2) AS material_revenue,
-            ROUND(SUM(COALESCE(total_incentive_cost,0)),2) AS total_incentive,
-            ROUND(SUM(value_of_accepted_material)+SUM(COALESCE(total_incentive_cost,0)),2) AS total_revenue,
-            ROUND(SUM(net_material_sales_cost)+SUM(COALESCE(total_incentive_cost,0)),2) AS net_revenue
+            ROUND((SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS total_incentive,
+            ROUND((SUM(value_of_accepted_material)+SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS total_revenue,
+            ROUND((SUM(net_material_sales_cost)+SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS net_revenue
         FROM outward {FACILITY_FILTER};""",
 
     "outward: customer analysis": """
@@ -263,10 +263,10 @@ QUERY_LIBRARY = {
             SUM(dispatched_quantity) AS total_dispatched_kg, SUM(accepted_quantity) AS total_accepted_kg,
             ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(dispatched_quantity))::numeric,0),2) AS rejection_pct,
             ROUND(SUM(value_of_accepted_material)::numeric,2) AS material_revenue,
-            ROUND(SUM(COALESCE(total_incentive_cost,0)),2) AS total_incentive,
-            ROUND(SUM(value_of_accepted_material)+SUM(COALESCE(total_incentive_cost,0)),2) AS total_revenue,
-            ROUND(SUM(COALESCE(transportation_cost,0)),2) AS transportation_cost,
-            ROUND(SUM(net_material_sales_cost)+SUM(COALESCE(total_incentive_cost,0)),2) AS net_revenue
+            ROUND((SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS total_incentive,
+            ROUND((SUM(value_of_accepted_material)+SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS total_revenue,
+            ROUND((SUM(COALESCE(transportation_cost,0)))::numeric,2) AS transportation_cost,
+            ROUND((SUM(net_material_sales_cost)+SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS net_revenue
         FROM outward {FACILITY_FILTER}
         GROUP BY month,facility,customer ORDER BY month DESC,net_revenue DESC;""",
 
@@ -274,8 +274,8 @@ QUERY_LIBRARY = {
         SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, customer, destination,
             SUM(dispatched_quantity) AS total_dispatched_kg, SUM(accepted_quantity) AS total_accepted_kg,
             ROUND(SUM(value_of_accepted_material)::numeric,2) AS material_revenue,
-            ROUND(SUM(value_of_accepted_material)+SUM(COALESCE(total_incentive_cost,0)),2) AS total_revenue,
-            ROUND(SUM(net_material_sales_cost)+SUM(COALESCE(total_incentive_cost,0)),2) AS net_revenue
+            ROUND((SUM(value_of_accepted_material)+SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS total_revenue,
+            ROUND((SUM(net_material_sales_cost)+SUM(COALESCE(total_incentive_cost,0)))::numeric,2) AS net_revenue
         FROM outward {FACILITY_FILTER}
         GROUP BY month,facility,customer,destination ORDER BY month DESC,customer,net_revenue DESC;""",
 }
