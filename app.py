@@ -10,34 +10,45 @@ import plotly.express as px
 import plotly.graph_objects as go
 from sqlalchemy import create_engine, text
 from groq import Groq
-import streamlit_authenticator as stauth
+import bcrypt
 
 # ── PAGE CONFIG ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
-credentials = dict(st.secrets["credentials"])
-cookie = dict(st.secrets["cookie"])
+def check_password(username, password):
+    users = st.secrets.get("credentials", {}).get("usernames", {})
+    if username not in users:
+        return False
+    stored_hash = users[username].get("password", "")
+    return bcrypt.checkpw(password.encode(), stored_hash.encode())
 
-authenticator = stauth.Authenticate(
-    credentials,
-    cookie["name"],
-    cookie["key"],
-    cookie["expiry_days"]
-)
+def get_user_info(username):
+    return dict(st.secrets["credentials"]["usernames"][username])
 
-authenticator.login()
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+    st.session_state.username = None
 
-if not st.session_state.get("authentication_status"):
-    if st.session_state.get("authentication_status") is False:
-        st.error("Username or password is incorrect")
-    else:
-        st.info("Please enter your username and password")
+if not st.session_state.authenticated:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("## Waste Ops MIS")
+        st.markdown("---")
+        username_input = st.text_input("Username")
+        password_input = st.text_input("Password", type="password")
+        if st.button("Login", use_container_width=True):
+            if check_password(username_input, password_input):
+                st.session_state.authenticated = True
+                st.session_state.username = username_input
+                st.rerun()
+            else:
+                st.error("Incorrect username or password")
     st.stop()
 
 # Get user info
-username = st.session_state["username"]
-user_info = credentials["usernames"][username]
+username = st.session_state.username
+user_info = get_user_info(username)
 user_role = user_info["role"]
 user_facility = user_info["facility"]
 user_name = user_info["name"]
@@ -590,7 +601,7 @@ for k, v in defaults.items():
 with st.sidebar:
     st.markdown(f"## Waste Ops MIS")
     st.caption(f"👤 {user_name} ({user_role})")
-    authenticator.logout("Logout", "sidebar")
+    if st.button("Logout"): st.session_state.authenticated = False; st.session_state.username = None; st.rerun()
     st.divider()
 
     # Facility selector — restrict managers to their facility
