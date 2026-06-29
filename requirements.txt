@@ -1,5 +1,5 @@
 streamlit==1.50.0
-streamlit-authenticator==0.4.2
+streamlit-authenticator==0.3.3
 groq==1.0.0
 plotly==6.8.0
 pandas==2.3.3
