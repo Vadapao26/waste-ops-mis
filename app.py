@@ -649,34 +649,48 @@ with st.sidebar:
     st.divider()
     st.markdown("**Analytics**")
     st.caption("Run full group at once")
+    def _set_combined(keys):
+        for k in ["library_query","combined_query","combined_results","pending_clarification","active_clarifications"]:
+            st.session_state.pop(k, None)
+        st.session_state.combined_query = keys
+
+    def _set_library(key):
+        for k in ["combined_query","combined_results","pending_clarification","active_clarifications"]:
+            st.session_state.pop(k, None)
+        st.session_state.library_query = key
+        st.session_state.is_kpi = "kpi" in key
+        st.session_state.explorations = None
+
     col1, col2 = st.columns(2)
     with col1:
         if st.button("All Inward", use_container_width=True, key="all_inward"):
             if facility_selected and time_selected:
-                st.session_state.combined_query = ["inward: kpi summary","inward: vendor analysis","inward: vendor location analysis"]
+                _set_combined(["inward: kpi summary","inward: vendor analysis","inward: vendor location analysis"])
+                st.rerun()
     with col2:
         if st.button("All Outward", use_container_width=True, key="all_outward"):
             if facility_selected and time_selected:
-                st.session_state.combined_query = ["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"]
+                _set_combined(["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"])
+                st.rerun()
     col3, col4 = st.columns(2)
     with col3:
         if st.button("All Production", use_container_width=True, key="all_prod"):
             if facility_selected and time_selected:
-                st.session_state.combined_query = ["production: kpi summary","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"]
+                _set_combined(["production: kpi summary","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"])
+                st.rerun()
     with col4:
         if st.button("All ULB", use_container_width=True, key="all_ulb"):
             if facility_selected and time_selected:
-                st.session_state.combined_query = ["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"]
+                _set_combined(["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"])
+                st.rerun()
     st.divider()
     for group_name, preset_keys in SIDEBAR_GROUPS.items():
         with st.expander(group_name, expanded=False):
             for key in preset_keys:
                 label = key.split(": ")[1].title()
                 if st.button(label, key=f"btn_{key}", use_container_width=True):
-                    st.session_state.library_query = key
-                    st.session_state.is_kpi = "kpi" in key
-                    st.session_state.combined_results = None
-                    st.session_state.explorations = None
+                    _set_library(key)
+                    st.rerun()
     st.divider()
     st.caption("Or type a question below")
 
@@ -820,13 +834,7 @@ elif 'combined_query' in st.session_state:
         st.session_state.num_months = num_months
         st.session_state["display_time"] = display_time
         st.session_state.messages.append({'role':'assistant','content':f"Loaded {len(results)} analyses."})
-        # Render directly without rerun to avoid key collision on rerender
-        st.markdown("---")
-        for idx, (key, sql, df, is_kpi) in enumerate(results):
-            st.markdown(f"### {key.split(': ')[1].title()}")
-            panel_label = key.replace(" ","_").replace(":","")
-            show_result_panel(df, sql, panel_label, num_months, is_kpi, panel_id=f"fresh_{idx}_{panel_label}")
-            st.divider()
+        st.rerun()
 
 elif st.session_state.get('pending_clarification'):
     pending = st.session_state.pending_clarification
