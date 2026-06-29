@@ -649,39 +649,31 @@ with st.sidebar:
     st.divider()
     st.markdown("**Analytics**")
     st.caption("Run full group at once")
-    def _set_combined(keys):
-        for k in ["library_query","combined_query","combined_results","pending_clarification","active_clarifications"]:
-            st.session_state.pop(k, None)
-        st.session_state.combined_query = keys
-
-    def _set_library(key):
-        for k in ["combined_query","combined_results","pending_clarification","active_clarifications"]:
-            st.session_state.pop(k, None)
-        st.session_state.library_query = key
-        st.session_state.is_kpi = "kpi" in key
-        st.session_state.explorations = None
-
     col1, col2 = st.columns(2)
     with col1:
         if st.button("All Inward", use_container_width=True, key="all_inward"):
             if facility_selected and time_selected:
-                _set_combined(["inward: kpi summary","inward: vendor analysis","inward: vendor location analysis"])
+                st.session_state["_action"] = {"type":"combined","keys":["inward: kpi summary","inward: vendor analysis","inward: vendor location analysis"],"label":f"Inward Full Analysis | {selected_facility} | {display_time}"}
+                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                 st.rerun()
     with col2:
         if st.button("All Outward", use_container_width=True, key="all_outward"):
             if facility_selected and time_selected:
-                _set_combined(["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"])
+                st.session_state["_action"] = {"type":"combined","keys":["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"],"label":f"Outward Full Analysis | {selected_facility} | {display_time}"}
+                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                 st.rerun()
     col3, col4 = st.columns(2)
     with col3:
         if st.button("All Production", use_container_width=True, key="all_prod"):
             if facility_selected and time_selected:
-                _set_combined(["production: kpi summary","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"])
+                st.session_state["_action"] = {"type":"combined","keys":["production: kpi summary","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"],"label":f"Production Full Analysis | {selected_facility} | {display_time}"}
+                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                 st.rerun()
     with col4:
         if st.button("All ULB", use_container_width=True, key="all_ulb"):
             if facility_selected and time_selected:
-                _set_combined(["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"])
+                st.session_state["_action"] = {"type":"combined","keys":["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"],"label":f"ULB Full Analysis | {selected_facility} | {display_time}"}
+                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                 st.rerun()
     st.divider()
     for group_name, preset_keys in SIDEBAR_GROUPS.items():
@@ -689,7 +681,8 @@ with st.sidebar:
             for key in preset_keys:
                 label = key.split(": ")[1].title()
                 if st.button(label, key=f"btn_{key}", use_container_width=True):
-                    _set_library(key)
+                    st.session_state["_action"] = {"type":"library","key":key,"is_kpi":"kpi" in key}
+                    st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                     st.rerun()
     st.divider()
     st.caption("Or type a question below")
@@ -701,147 +694,84 @@ if not facility_selected or not time_selected:
     missing = []
     if not facility_selected: missing.append("Facility")
     if not time_selected: missing.append("Time Period")
-    st.markdown(f'<div style="background:#FDF6E8;border:1px solid #F0D090;border-radius:8px;padding:12px 16px;margin-bottom:1rem;"><div style="color:#7A4E0A;font-weight:600;font-size:13px;">⚠️ Please select {" and ".join(missing)} to begin</div><div style="color:#9B7A40;font-size:12px;">All results will be shown for the selected facility and time period only.</div></div>', unsafe_allow_html=True)
+    st.warning(f"⚠️ Please select {' and '.join(missing)} to begin")
 else:
     st.markdown(f'<div style="background:#F0F8F0;border:1px solid #B8D4B8;border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:16px;margin-bottom:1rem;font-size:12px;"><span style="color:#4A7A4A;">✓</span><span style="color:#9B9490;">Facility</span><span style="color:#2C2A28;font-weight:500;">{selected_facility}</span><span style="color:#E8E0D5;">|</span><span style="color:#9B9490;">Period</span><span style="color:#2C2A28;font-weight:500;">{display_time}</span><span style="color:#E8E0D5;">|</span><span style="color:#9B9490;">{date_from} to {date_to}</span></div>', unsafe_allow_html=True)
 
+# ── CHAT HISTORY ──────────────────────────────────────────────────────────────
 for msg in st.session_state.messages:
     with st.chat_message(msg['role']):
         st.write(msg['content'])
 
-# Show current result
-if st.session_state.current_df is not None:
-    show_result_panel(st.session_state.current_df, st.session_state.current_sql,
-        st.session_state.current_label, st.session_state.num_months, st.session_state.is_kpi)
-    if st.session_state.get('explorations'):
-        st.divider()
-        st.markdown("**Want to explore further?**")
-        exp_cols = st.columns(min(len(st.session_state.explorations),5))
-        for i, exp in enumerate(st.session_state.explorations[:5]):
-            with exp_cols[i]:
-                if st.button(exp['label'], key=f"explore_{i}_{st.session_state.current_label}",
-                           help=exp.get('description',''), use_container_width=True):
-                    st.session_state.pending_clarification = {
-                        "question": exp['label'], "choice": exp['label'],
-                        "description": exp.get('description',''),
-                        "date_from": date_from, "date_to": date_to,
-                        "original_sql": st.session_state.current_sql,
-                        "original_question": st.session_state.pending_question
-                    }
-                    st.rerun()
-
-# Show combined results
-elif st.session_state.get('combined_results'):
-    for idx, (key, sql, df, is_kpi) in enumerate(st.session_state.combined_results):
-        st.markdown(f"### {key.split(': ')[1].title()}")
-        panel_label = key.replace(" ","_").replace(":","")
-        show_result_panel(df, sql, panel_label, num_months, is_kpi, panel_id=f"combined_{idx}_{panel_label}")
-        st.divider()
-
-# Show history
-if st.session_state.get('result_history'):
-    st.divider()
-    st.markdown("#### Previous Analyses")
-    for hidx, hist in enumerate(reversed(st.session_state.result_history)):
-        real_idx = len(st.session_state.result_history)-1-hidx
-        hist_label = hist.get("label","result").replace("_"," ").title()
-        with st.expander(f"📊 {hist_label} | {hist.get('display_time','')} | {hist.get('facility','')}", expanded=False):
-            show_result_panel(hist["df"], hist["sql"], f"hist_{real_idx}", hist["num_months"], hist["is_kpi"], panel_id=f"hist_panel_{real_idx}")
-
-# ── CLARIFICATION BUTTONS ──────────────────────────────────────────────────────
-if st.session_state.get("active_clarifications") and not st.session_state.get("pending_clarification"):
-    clarifications = st.session_state["active_clarifications"]
-    q = st.session_state.get("clarification_question","")
-    d_from = st.session_state.get("clarification_date_from", date_from)
-    d_to = st.session_state.get("clarification_date_to", date_to)
-    st.markdown("---")
-    st.markdown("**How would you like to see this data?**")
-    st.caption(f"Date: {d_from} to {d_to} | {selected_facility}")
-    cols = st.columns(len(clarifications))
-    for i, c in enumerate(clarifications):
-        with cols[i]:
-            if st.button(c["label"], key=f"clarify_{i}_{abs(hash(q))%10000}",
-                       help=c.get("description",""), use_container_width=True):
-                st.session_state.pending_clarification = {
-                    "question": q, "choice": c["label"],
-                    "description": c.get("description",""),
-                    "date_from": d_from, "date_to": d_to
-                }
-                st.session_state["active_clarifications"] = None
-                st.rerun()
-
+# ── CHAT INPUT ────────────────────────────────────────────────────────────────
 question = st.chat_input("Ask anything about your waste operations data...")
 
 if not facility_selected or not time_selected:
     st.info("👈 Please select a Facility and Time Period in the sidebar to begin analysis.")
     st.stop()
 
-# ── PRESET HANDLER ────────────────────────────────────────────────────────────
-if 'library_query' in st.session_state:
-    lib_key = st.session_state.library_query
-    del st.session_state.library_query
-    is_kpi = st.session_state.is_kpi
-    label = lib_key.replace(" ","_").replace(":","")
-    display_label = f"{lib_key.title()} | {selected_facility} | {display_time}"
-    with st.chat_message("user"):
-        st.write(display_label)
-    st.session_state.messages.append({'role':'user','content':display_label})
-    sql = inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
-    df, error = run_query(sql)
-    if error:
-        with st.chat_message("assistant"):
-            st.write(f"Error: {error}")
-    else:
-        if st.session_state.current_df is not None:
-            if not st.session_state.result_history: st.session_state.result_history = []
-            st.session_state.result_history.append({
-                "df": st.session_state.current_df, "sql": st.session_state.current_sql,
-                "label": st.session_state.current_label or "result",
-                "num_months": st.session_state.num_months, "is_kpi": st.session_state.is_kpi,
-                "display_time": st.session_state.get("display_time",""), "facility": selected_facility
-            })
-        st.session_state.current_df = df
-        st.session_state.current_sql = sql
-        st.session_state.current_label = label
-        st.session_state.num_months = num_months
-        st.session_state.is_kpi = is_kpi
-        st.session_state["display_time"] = display_time
-        st.session_state.combined_results = None
-        st.session_state.explorations = None
-        st.session_state.pending_question = None
-        with st.chat_message("assistant"):
-            st.write(f"Found {len(df)} results.")
-        st.session_state.messages.append({'role':'assistant','content':f"Found {len(df)} results."})
-        st.rerun()
+# ── ACTION DISPATCHER ─────────────────────────────────────────────────────────
+# Determine what action to run this render cycle
+action = st.session_state.pop("_action", None)
 
-elif 'combined_query' in st.session_state:
-    keys = st.session_state.combined_query
-    del st.session_state.combined_query
-    group_name = keys[0].split(":")[0].title()
-    display_label = f"{group_name} Full Analysis | {selected_facility} | {display_time}"
+def run_and_show_combined(keys, label):
+    """Run multiple preset queries and render all results inline — no rerun needed."""
+    st.session_state.messages.append({"role": "user", "content": label})
     with st.chat_message("user"):
-        st.write(display_label)
-    st.session_state.messages.append({'role':'user','content':display_label})
+        st.write(label)
     results = []
     for key in keys:
         sql = inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
         df, error = run_query(sql)
-        if not error and df is not None:
+        if error:
+            st.error(f"Query failed for {key}: {error}")
+        elif df is not None:
             results.append((key, sql, df, "kpi" in key))
     if results:
-        st.session_state.combined_results = results
-        st.session_state.current_df = None
-        st.session_state.num_months = num_months
-        st.session_state["display_time"] = display_time
-        st.session_state.messages.append({'role':'assistant','content':f"Loaded {len(results)} analyses."})
-        st.rerun()
+        msg = f"Loaded {len(results)} analyses."
+        st.session_state.messages.append({"role": "assistant", "content": msg})
+        with st.chat_message("assistant"):
+            st.write(msg)
+        for idx, (key, sql, df, is_kpi) in enumerate(results):
+            st.markdown(f"### {key.split(': ')[1].title()}")
+            panel_label = key.replace(" ", "_").replace(":", "")
+            show_result_panel(df, sql, panel_label, num_months, is_kpi,
+                              panel_id=f"combined_{idx}_{panel_label}_{date_from}")
+            st.divider()
 
-elif st.session_state.get('pending_clarification'):
-    pending = st.session_state.pending_clarification
-    st.session_state.pending_clarification = None
+def run_and_show_single(lib_key, is_kpi):
+    """Run a single preset query and render inline."""
+    label = f"{lib_key.title()} | {selected_facility} | {display_time}"
+    st.session_state.messages.append({"role": "user", "content": label})
+    with st.chat_message("user"):
+        st.write(label)
+    sql = inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
+    df, error = run_query(sql)
+    if error:
+        with st.chat_message("assistant"):
+            st.error(f"Query error: {error}")
+    else:
+        msg = f"Found {len(df)} results."
+        st.session_state.messages.append({"role": "assistant", "content": msg})
+        with st.chat_message("assistant"):
+            st.write(msg)
+        panel_label = lib_key.replace(" ", "_").replace(":", "")
+        show_result_panel(df, sql, panel_label, num_months, is_kpi,
+                          panel_id=f"single_{panel_label}_{date_from}")
+
+# ── HANDLE BUTTON ACTIONS ─────────────────────────────────────────────────────
+if action and action.get("type") == "combined":
+    run_and_show_combined(action["keys"], action["label"])
+
+elif action and action.get("type") == "library":
+    run_and_show_single(action["key"], action["is_kpi"])
+
+# ── HANDLE CLARIFICATION CHOICE ───────────────────────────────────────────────
+elif action and action.get("type") == "clarification":
+    pending = action
     with st.chat_message("user"):
         st.write(f"Show me: {pending['choice']}")
-    st.session_state.messages.append({'role':'user','content':f"Show me: {pending['choice']}"})
+    st.session_state.messages.append({"role": "user", "content": f"Show me: {pending['choice']}"})
     with st.spinner(f"Running: {pending['choice']}..."):
         llm_response = ask_groq_sql(
             pending["question"], pending["choice"], selected_facility,
@@ -854,66 +784,96 @@ elif st.session_state.get('pending_clarification'):
             df, error = run_query(sql)
             if error:
                 with st.chat_message("assistant"):
-                    st.write(f"Error: {error}")
-                    st.code(sql, language='sql')
+                    st.error(f"Query error: {error}")
+                    st.code(sql, language="sql")
             else:
-                if st.session_state.current_df is not None:
-                    if not st.session_state.result_history: st.session_state.result_history = []
-                    st.session_state.result_history.append({
-                        "df": st.session_state.current_df, "sql": st.session_state.current_sql,
-                        "label": st.session_state.current_label or "result",
-                        "num_months": st.session_state.num_months, "is_kpi": st.session_state.is_kpi,
-                        "display_time": st.session_state.get("display_time",""), "facility": selected_facility
-                    })
-                st.session_state.current_df = df
-                st.session_state.current_sql = sql
-                st.session_state.current_label = pending["choice"].replace(" ","_").lower()[:30]
-                st.session_state.num_months = num_months
-                st.session_state.is_kpi = False
-                st.session_state["display_time"] = f"{pending['date_from']} to {pending['date_to']}"
-                st.session_state.combined_results = None
-                st.session_state.pending_question = pending["question"]
-                if not st.session_state.conversation_history: st.session_state.conversation_history = []
+                if not st.session_state.conversation_history:
+                    st.session_state.conversation_history = []
                 st.session_state.conversation_history.append({
-                    "question": pending["question"], "clarification": pending["choice"], "sql": sql,
-                    "result_summary": f"{len(df)} rows"
+                    "question": pending["question"], "clarification": pending["choice"],
+                    "sql": sql, "result_summary": f"{len(df)} rows"
                 })
+                msg = f"Found {len(df)} results for: {pending['choice']}"
+                st.session_state.messages.append({"role": "assistant", "content": msg})
+                with st.chat_message("assistant"):
+                    st.write(msg)
+                panel_id = f"clarify_{pending['choice'][:20].replace(' ','_')}_{date_from}"
+                show_result_panel(df, sql, "clarification_result", num_months, False, panel_id=panel_id)
                 with st.spinner("Generating exploration suggestions..."):
                     st.session_state.explorations = get_explorations(
                         pending["question"], df.columns, selected_facility,
                         pending["date_from"], pending["date_to"]
                     )
-                with st.chat_message("assistant"):
-                    st.write(f"Found {len(df)} results for: {pending['choice']}")
-                st.session_state.messages.append({'role':'assistant','content':f"Found {len(df)} results."})
+                st.session_state._last_sql = sql
+                st.session_state._last_question = pending["question"]
+
+# ── SHOW EXPLORATION SUGGESTIONS ──────────────────────────────────────────────
+if st.session_state.get("explorations"):
+    st.divider()
+    st.markdown("**Want to explore further?**")
+    exp_cols = st.columns(min(len(st.session_state.explorations), 5))
+    for i, exp in enumerate(st.session_state.explorations[:5]):
+        with exp_cols[i]:
+            if st.button(exp["label"], key=f"explore_{i}_{date_from}", help=exp.get("description", ""), use_container_width=True):
+                st.session_state["_action"] = {
+                    "type": "clarification",
+                    "question": exp["label"], "choice": exp["label"],
+                    "date_from": date_from, "date_to": date_to,
+                    "original_sql": st.session_state.get("_last_sql"),
+                    "original_question": st.session_state.get("_last_question")
+                }
+                st.session_state.explorations = None
                 st.rerun()
 
+# ── SHOW CLARIFICATION OPTIONS ────────────────────────────────────────────────
+if st.session_state.get("active_clarifications") and not st.session_state.get("_action"):
+    clarifications = st.session_state["active_clarifications"]
+    q = st.session_state.get("clarification_question", "")
+    d_from = st.session_state.get("clarification_date_from", date_from)
+    d_to = st.session_state.get("clarification_date_to", date_to)
+    st.markdown("---")
+    st.markdown("**How would you like to see this data?**")
+    st.caption(f"Date: {d_from} to {d_to} | {selected_facility}")
+    cols = st.columns(min(len(clarifications), 4))
+    for i, c in enumerate(clarifications[:4]):
+        with cols[i]:
+            if st.button(c["label"], key=f"clarify_{i}_{abs(hash(q))%10000}", help=c.get("description", ""), use_container_width=True):
+                st.session_state["_action"] = {
+                    "type": "clarification",
+                    "question": q, "choice": c["label"],
+                    "date_from": d_from, "date_to": d_to
+                }
+                st.session_state["active_clarifications"] = None
+                st.rerun()
+
+# ── HANDLE FREE-TEXT QUESTION ─────────────────────────────────────────────────
 elif question:
     with st.chat_message("user"):
         st.write(question)
-    st.session_state.messages.append({"role":"user","content":question})
+    st.session_state.messages.append({"role": "user", "content": question})
+
     import re as re2, calendar as cal2
     date_override_from = date_from
     date_override_to = date_to
     year_months = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re2.IGNORECASE)
     month_map2 = {"jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
-                "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
-    if len(year_months)>=2:
-        m1,y1=year_months[0]; m2,y2=year_months[-1]
-        date_override_from=f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-        last=cal2.monthrange(int(y2),int(month_map2[m2.lower()[:3]]))[1]
-        date_override_to=f"{y2}-{month_map2[m2.lower()[:3]]}-{last}"
-    elif len(year_months)==1:
-        m1,y1=year_months[0]
-        date_override_from=f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-        last=cal2.monthrange(int(y1),int(month_map2[m1.lower()[:3]]))[1]
-        date_override_to=f"{y1}-{month_map2[m1.lower()[:3]]}-{last}"
+                  "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
+    if len(year_months) >= 2:
+        m1, y1 = year_months[0]; m2, y2 = year_months[-1]
+        date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
+        last = cal2.monthrange(int(y2), int(month_map2[m2.lower()[:3]]))[1]
+        date_override_to = f"{y2}-{month_map2[m2.lower()[:3]]}-{last}"
+    elif len(year_months) == 1:
+        m1, y1 = year_months[0]
+        date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
+        last = cal2.monthrange(int(y1), int(month_map2[m1.lower()[:3]]))[1]
+        date_override_to = f"{y1}-{month_map2[m1.lower()[:3]]}-{last}"
 
     with st.spinner("Understanding your question..."):
         clarifications = get_clarifications(question, selected_facility, date_override_from, date_override_to)
 
     if clarifications:
-        st.session_state.messages.append({"role":"assistant","content":f"How would you like to see this? ({len(clarifications)} options shown)"})
+        st.session_state.messages.append({"role": "assistant", "content": f"How would you like to see this? ({len(clarifications)} options shown)"})
         st.session_state["active_clarifications"] = clarifications
         st.session_state["clarification_question"] = question
         st.session_state["clarification_date_from"] = date_override_from
@@ -927,36 +887,29 @@ elif question:
                 df, error = run_query(sql)
                 if error:
                     with st.chat_message("assistant"):
-                        st.write(f"Error: {error}")
-                        st.code(sql, language='sql')
+                        st.error(f"Query error: {error}")
+                        st.code(sql, language="sql")
                 else:
-                    if st.session_state.current_df is not None:
-                        if not st.session_state.result_history: st.session_state.result_history = []
-                        st.session_state.result_history.append({
-                            "df": st.session_state.current_df, "sql": st.session_state.current_sql,
-                            "label": st.session_state.current_label or "result",
-                            "num_months": st.session_state.num_months, "is_kpi": st.session_state.is_kpi,
-                            "display_time": st.session_state.get("display_time",""), "facility": selected_facility
-                        })
-                    st.session_state.current_df = df
-                    st.session_state.current_sql = sql
-                    st.session_state.current_label = "custom_query"
-                    st.session_state.num_months = num_months
-                    st.session_state.is_kpi = False
-                    st.session_state["display_time"] = display_time
-                    st.session_state.combined_results = None
-                    st.session_state.pending_question = question
-                    st.session_state.explorations = None
-                    if not st.session_state.conversation_history: st.session_state.conversation_history = []
+                    if not st.session_state.conversation_history:
+                        st.session_state.conversation_history = []
                     st.session_state.conversation_history.append({
-                        "question": question, "clarification": None, "sql": sql,
-                        "result_summary": f"{len(df)} rows"
+                        "question": question, "clarification": None,
+                        "sql": sql, "result_summary": f"{len(df)} rows"
                     })
+                    msg = f"Found {len(df)} results."
+                    st.session_state.messages.append({"role": "assistant", "content": msg})
                     with st.chat_message("assistant"):
-                        st.write(f"Found {len(df)} results.")
-                    st.session_state.messages.append({"role":"assistant","content":f"Found {len(df)} results."})
+                        st.write(msg)
+                    panel_id = f"freetext_{date_from}_{abs(hash(question))%10000}"
+                    show_result_panel(df, sql, "custom_query", num_months, False, panel_id=panel_id)
+                    st.session_state._last_sql = sql
+                    st.session_state._last_question = question
+                    with st.spinner("Generating exploration suggestions..."):
+                        st.session_state.explorations = get_explorations(
+                            question, df.columns, selected_facility, date_override_from, date_override_to
+                        )
                     st.rerun()
             else:
                 with st.chat_message("assistant"):
                     st.write(llm_response)
-                st.session_state.messages.append({"role":"assistant","content":llm_response})
+                st.session_state.messages.append({"role": "assistant", "content": llm_response})
