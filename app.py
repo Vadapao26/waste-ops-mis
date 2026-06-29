@@ -28,9 +28,10 @@ def get_user_info(username):
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "username" not in st.session_state:
     st.session_state.username = None
 
-if not st.session_state.authenticated:
+if not st.session_state.get("authenticated", False):
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("## Waste Ops MIS")
