@@ -28,10 +28,9 @@ def get_user_info(username):
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
-if "username" not in st.session_state:
     st.session_state.username = None
 
-if not st.session_state.get("authenticated", False):
+if not st.session_state.authenticated:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("## Waste Ops MIS")
@@ -554,16 +553,17 @@ Question: {question}"""
     except Exception as e:
         return f"Error: {e}"
 
-def show_result_panel(df, sql, label, num_months, is_kpi=False):
+def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None):
+    uid = panel_id or label
     c1, c2 = st.columns(2)
     with c1:
         st.download_button("Download CSV", data=df_to_csv_bytes(df),
-            file_name=f"{label}.csv", mime="text/csv", key=f"csv_{label}")
+            file_name=f"{label}.csv", mime="text/csv", key=f"csv_{uid}")
     with c2:
         st.download_button("Download Excel", data=df_to_excel_bytes(df),
             file_name=f"{label}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"xlsx_{label}")
+            key=f"xlsx_{uid}")
     st.caption(f"{len(df)} results")
     if is_kpi and len(df)==1:
         render_kpi_cards(df.copy())
@@ -575,12 +575,12 @@ def show_result_panel(df, sql, label, num_months, is_kpi=False):
                 month_df = df[df["month"]==month].reset_index(drop=True)
                 st.dataframe(format_dataframe(add_summary_row(month_df.copy())), use_container_width=True, height=280)
                 st.download_button(f"Download {month}", data=df_to_csv_bytes(month_df),
-                    file_name=f"{label}_{month}.csv", mime="text/csv", key=f"csv_{label}_{month}_{i}")
+                    file_name=f"{label}_{month}.csv", mime="text/csv", key=f"csv_{uid}_{month}_{i}")
         with tabs[-1]:
             st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=280)
     else:
         st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=320)
-    with st.expander("View SQL"):
+    with st.expander("View SQL", key=f"sql_{uid}"):
         st.code(sql, language='sql')
 
 # ── SESSION STATE ─────────────────────────────────────────────────────────────
@@ -718,12 +718,10 @@ if st.session_state.current_df is not None:
 
 # Show combined results
 elif st.session_state.get('combined_results'):
-    for key, sql, df, is_kpi in st.session_state.combined_results:
+    for idx, (key, sql, df, is_kpi) in enumerate(st.session_state.combined_results):
         st.markdown(f"### {key.split(': ')[1].title()}")
-        try:
-            show_result_panel(df, sql, key.replace(" ","_").replace(":",""), num_months, is_kpi)
-        except Exception as e:
-            st.error(f"Display error in {key}: {e}")
+        panel_label = key.replace(" ","_").replace(":","")
+        show_result_panel(df, sql, panel_label, num_months, is_kpi, panel_id=f"combined_{idx}_{panel_label}")
         st.divider()
 
 # Show history
@@ -734,7 +732,7 @@ if st.session_state.get('result_history'):
         real_idx = len(st.session_state.result_history)-1-hidx
         hist_label = hist.get("label","result").replace("_"," ").title()
         with st.expander(f"📊 {hist_label} | {hist.get('display_time','')} | {hist.get('facility','')}", expanded=False):
-            show_result_panel(hist["df"], hist["sql"], f"hist_{real_idx}", hist["num_months"], hist["is_kpi"])
+            show_result_panel(hist["df"], hist["sql"], f"hist_{real_idx}", hist["num_months"], hist["is_kpi"], panel_id=f"hist_panel_{real_idx}")
 
 # ── CLARIFICATION BUTTONS ──────────────────────────────────────────────────────
 if st.session_state.get("active_clarifications") and not st.session_state.get("pending_clarification"):
@@ -821,10 +819,14 @@ elif 'combined_query' in st.session_state:
         st.session_state.current_df = None
         st.session_state.num_months = num_months
         st.session_state["display_time"] = display_time
-        with st.chat_message("assistant"):
-            st.write(f"Loaded {len(results)} analyses.")
         st.session_state.messages.append({'role':'assistant','content':f"Loaded {len(results)} analyses."})
-        st.rerun()
+        # Render directly without rerun to avoid key collision on rerender
+        st.markdown("---")
+        for idx, (key, sql, df, is_kpi) in enumerate(results):
+            st.markdown(f"### {key.split(': ')[1].title()}")
+            panel_label = key.replace(" ","_").replace(":","")
+            show_result_panel(df, sql, panel_label, num_months, is_kpi, panel_id=f"fresh_{idx}_{panel_label}")
+            st.divider()
 
 elif st.session_state.get('pending_clarification'):
     pending = st.session_state.pending_clarification
@@ -950,4 +952,3 @@ elif question:
                 with st.chat_message("assistant"):
                     st.write(llm_response)
                 st.session_state.messages.append({"role":"assistant","content":llm_response})
-# deployed Mon 29 Jun 2026 17:06:45 IST
