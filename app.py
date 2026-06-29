@@ -720,7 +720,10 @@ if st.session_state.current_df is not None:
 elif st.session_state.get('combined_results'):
     for key, sql, df, is_kpi in st.session_state.combined_results:
         st.markdown(f"### {key.split(': ')[1].title()}")
-        show_result_panel(df, sql, key.replace(" ","_").replace(":",""), num_months, is_kpi)
+        try:
+            show_result_panel(df, sql, key.replace(" ","_").replace(":",""), num_months, is_kpi)
+        except Exception as e:
+            st.error(f"Display error in {key}: {e}")
         st.divider()
 
 # Show history
