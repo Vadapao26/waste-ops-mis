@@ -278,6 +278,83 @@ QUERY_LIBRARY = {
             ROUND((SUM(net_material_sales_cost::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS net_revenue
         FROM outward {FACILITY_FILTER}
         GROUP BY month,facility,customer,destination ORDER BY month DESC,customer,net_revenue DESC;""",
+
+    # ── TRAINING ──────────────────────────────────────────────────────────────
+    "training: kpi summary": """
+        SELECT
+            COUNT(DISTINCT training_code) AS total_trainings,
+            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_training_hours,
+            SUM(attendee_count) AS total_people_trained,
+            ROUND(AVG(duration_mins)::numeric, 0) AS avg_duration_mins
+        FROM training
+        {FACILITY_FILTER};""",
+
+    "training: topic analysis": """
+        SELECT
+            TO_CHAR(date::date, 'YYYY-MM') AS month,
+            facility,
+            topic,
+            category,
+            COUNT(*) AS sessions,
+            SUM(attendee_count) AS total_attendees,
+            ROUND(AVG(duration_mins)::numeric, 0) AS avg_duration_mins,
+            SUM(duration_mins) AS total_duration_mins
+        FROM training
+        {FACILITY_FILTER}
+        GROUP BY month, facility, topic, category
+        ORDER BY month DESC, sessions DESC;""",
+
+    "training: trainer analysis": """
+        SELECT
+            facility,
+            trainer,
+            COUNT(DISTINCT training_code) AS sessions_conducted,
+            SUM(attendee_count) AS total_people_trained,
+            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_training_hours,
+            ROUND(AVG(duration_mins)::numeric, 0) AS avg_duration_mins
+        FROM training
+        {FACILITY_FILTER}
+        GROUP BY facility, trainer
+        ORDER BY sessions_conducted DESC;""",
+
+    "training: category analysis": """
+        SELECT
+            TO_CHAR(date::date, 'YYYY-MM') AS month,
+            facility,
+            category,
+            COUNT(DISTINCT training_code) AS sessions,
+            SUM(attendee_count) AS total_attendees,
+            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours
+        FROM training
+        {FACILITY_FILTER}
+        GROUP BY month, facility, category
+        ORDER BY month DESC, sessions DESC;""",
+
+    "training: role based attendance": """
+        SELECT
+            facility,
+            attendee_role AS role,
+            COUNT(DISTINCT training_code) AS sessions_attended,
+            COUNT(DISTINCT attendee_name) AS unique_people,
+            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours_received
+        FROM training_attendees
+        {FACILITY_FILTER}
+        GROUP BY facility, attendee_role
+        ORDER BY sessions_attended DESC;""",
+
+    "training: repeat attendees": """
+        SELECT
+            facility,
+            attendee_name AS name,
+            attendee_role AS role,
+            COUNT(DISTINCT training_code) AS sessions_attended,
+            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours_received,
+            STRING_AGG(DISTINCT category, ', ') AS categories_covered
+        FROM training_attendees
+        {FACILITY_FILTER}
+        GROUP BY facility, attendee_name, attendee_role
+        HAVING COUNT(DISTINCT training_code) > 1
+        ORDER BY sessions_attended DESC;""",
 }
 
 SIDEBAR_GROUPS = {
@@ -287,6 +364,7 @@ SIDEBAR_GROUPS = {
     "ULB Analytics": ["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"],
     "BWG Analytics": ["bwg: kpi summary","bwg: location analysis"],
     "Outward Analytics": ["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"],
+    "Training Analytics": ["training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],
 }
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
@@ -749,6 +827,13 @@ with st.sidebar:
         if st.button("All ULB", use_container_width=True, key="all_ulb"):
             if facility_selected and time_selected:
                 st.session_state["_action"] = {"type":"combined","keys":["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"],"label":f"ULB Full Analysis | {selected_facility} | {display_time}"}
+                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
+                st.rerun()
+    col5, col6 = st.columns(2)
+    with col5:
+        if st.button("All Training", use_container_width=True, key="all_training"):
+            if facility_selected and time_selected:
+                st.session_state["_action"] = {"type":"combined","keys":["training: kpi summary","training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],"label":f"Training Full Analysis | {selected_facility} | {display_time}"}
                 st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                 st.rerun()
     st.divider()

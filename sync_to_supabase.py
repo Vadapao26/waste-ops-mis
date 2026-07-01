@@ -50,7 +50,7 @@ SHEETS = {
     "Attibele":    "1-yelqRAIhS51Etic4eLrwo4lSLSs0nqbM2SPXhCGxVQ",
 }
 
-TABLES = ["inward", "outward", "production", "expense", "revenue"]
+TABLES = ["inward", "outward", "production", "expense", "revenue", "training", "training_attendees"]
 
 # ── GOOGLE SHEETS CONNECTION ───────────────────────────────────────────────────
 def connect_gsheets():
@@ -74,7 +74,7 @@ def load_facility(client, facility, sheet_id):
         wb = client.open_by_key(sheet_id)
         print(f"  Connected to {facility}")
         time.sleep(2)
-        for sheet_name in ["Inward", "Production", "Outward", "Expenses", "Revenue"]:
+        for sheet_name in ["Inward", "Production", "Outward", "Expenses", "Revenue", "Training"]:
             try:
                 ws = wb.worksheet(sheet_name)
                 time.sleep(1.5)
@@ -158,6 +158,77 @@ def process_revenue(df):
     amount_cols = [c for c in df.columns if "amount" in c or "bill" in c]
     return to_num(df, amount_cols)
 
+def parse_duration_mins(d):
+    try:
+        parts = str(d).split(':')
+        return int(parts[0]) * 60 + int(parts[1])
+    except:
+        return 0
+
+TRAINER_MAP = {
+    'Khadar': 'Khadar', 'Vishal': 'Vishal', 'Pravin': 'Praveen Vandal',
+    'Praveen': 'Praveen Vandal', 'Praveen and lipak': 'Praveen Vandal & Lipak Behera',
+    'Praveen Vandal and Lipak Behera': 'Praveen Vandal & Lipak Behera',
+    'Ganesh Shetty': 'Ganesh Shetty', 'Jayakumar (Encore Technician)': 'Jayakumar',
+    'Chandrashekar': 'Chandrashekar',
+    'Jaganath Ram (from Integrated Pacline India Pvt. Ltd)': 'Jaganath Ram',
+    'Siddhesh': 'Siddhesh', 'Siddhesh and Akarsh': 'Siddhesh & Akarsh',
+    'Admin Infra/IIH': 'Admin Infra/IIH',
+}
+
+def process_training(df, facility):
+    df = clean_cols(df)
+    # Rename category column if it came in as training_category
+    if 'training_category' in df.columns:
+        df = df.rename(columns={'training_category': 'category'})
+    df['date'] = pd.to_datetime(df['training_date'], dayfirst=True, errors='coerce')
+    df['month'] = df['date'].dt.strftime('%Y-%m')
+    df['duration_mins'] = df['duration'].apply(parse_duration_mins)
+    df['attendee_count'] = df['attendee_names'].apply(
+        lambda x: len([a.strip() for a in str(x).split(',') if a.strip() and a.strip().lower() != 'nan']) if pd.notna(x) else 0
+    )
+    df['trainer'] = df['conducted_by'].str.strip().map(TRAINER_MAP).fillna(df['conducted_by'].str.strip())
+    df['facility'] = facility
+    keep = ['training_code','date','month','topics_of_training','category','location','trainer','duration_mins','attendee_count','facility']
+    keep = [c for c in keep if c in df.columns]
+    result = df[keep].copy()
+    result = result.rename(columns={'topics_of_training': 'topic'})
+    return result
+
+def process_training_attendees(df, facility):
+    df = clean_cols(df)
+    if 'training_category' in df.columns:
+        df = df.rename(columns={'training_category': 'category'})
+    df['date'] = pd.to_datetime(df['training_date'], dayfirst=True, errors='coerce')
+    df['month'] = df['date'].dt.strftime('%Y-%m')
+    df['duration_mins'] = df['duration'].apply(parse_duration_mins)
+    df['trainer'] = df['conducted_by'].str.strip().map(TRAINER_MAP).fillna(df['conducted_by'].str.strip())
+
+    rows = []
+    for _, row in df.iterrows():
+        names = [n.strip() for n in str(row.get('attendee_names','')).split(',') if n.strip() and n.strip().lower() != 'nan']
+        roles = [r.strip() for r in str(row.get('attendee_roles','')).split(',') if r.strip() and r.strip().lower() != 'nan']
+        facilities = [f.strip() for f in str(row.get('attendee_facilities','')).split(',') if f.strip() and f.strip().lower() != 'nan']
+        for i, name in enumerate(names):
+            role = roles[i] if i < len(roles) else 'Unknown'
+            if role == 'Project Cordinator': role = 'Project Coordinator'
+            att_facility = facilities[i] if i < len(facilities) else 'Unknown'
+            rows.append({
+                'training_code': row.get('training_code'),
+                'date': row['date'],
+                'month': row['month'],
+                'topic': row.get('topics_of_training'),
+                'category': row.get('category'),
+                'trainer': row['trainer'],
+                'duration_mins': row['duration_mins'],
+                'attendee_name': name,
+                'attendee_role': role,
+                'attendee_facility': att_facility,
+                'session_facility': facility,
+                'facility': facility,
+            })
+    return pd.DataFrame(rows)
+
 # ── MAIN SYNC ─────────────────────────────────────────────────────────────────
 def sync():
     print("🌐 Connecting to Google Sheets...")
@@ -171,9 +242,11 @@ def sync():
 
     all_inward, all_production, all_outward, all_expense, all_revenue = [], [], [], [], []
 
+    facility_data = {}
     for facility, sheet_id in SHEETS.items():
         print(f"\n📊 Loading {facility}...")
         data = load_facility(client, facility, sheet_id)
+        facility_data[facility] = data
         time.sleep(3)
 
         if "Inward"     in data: all_inward.append(process_inward(data["Inward"]))
@@ -192,6 +265,22 @@ def sync():
     }
 
     for table, dfs in datasets.items():
+        if dfs:
+            df = pd.concat(dfs, ignore_index=True)
+            df.to_sql(table, engine, if_exists="replace", index=False,
+                      chunksize=500, method="multi")
+            print(f"  ✅ {table}: {len(df)} rows written")
+        else:
+            print(f"  ⚠️  {table}: no data")
+
+    # Training tables
+    all_training, all_training_attendees = [], []
+    for facility, data in facility_data.items():
+        if "Training" in data:
+            all_training.append(process_training(data["Training"], facility))
+            all_training_attendees.append(process_training_attendees(data["Training"], facility))
+
+    for table, dfs in [("training", all_training), ("training_attendees", all_training_attendees)]:
         if dfs:
             df = pd.concat(dfs, ignore_index=True)
             df.to_sql(table, engine, if_exists="replace", index=False,
