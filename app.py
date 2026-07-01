@@ -554,9 +554,11 @@ Question: {question}"""
         return f"Error: {e}"
 
 def auto_chart(df, uid):
-    """Automatically pick the best chart based on data shape."""
+    """Interactive chart with X/Y axis and chart type selectors."""
     num_cols = df.select_dtypes(include="number").columns.tolist()
     cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+    all_cols = df.columns.tolist()
+
     if len(df) < 2 or not num_cols:
         return
 
@@ -565,32 +567,60 @@ def auto_chart(df, uid):
     if len(chart_df) < 2:
         return
 
-    # Time series: if month column exists
-    if "month" in chart_df.columns and len(num_cols) >= 1:
-        metric = num_cols[0]
-        color_col = next((c for c in cat_cols if c not in ["month", "facility", "date"]), None)
-        if color_col and chart_df[color_col].nunique() <= 10:
-            fig = px.line(chart_df, x="month", y=metric, color=color_col,
-                         markers=True, title=f"{metric.replace('_',' ').title()} by Month")
-        else:
-            fig = px.bar(chart_df, x="month", y=metric,
-                        title=f"{metric.replace('_',' ').title()} by Month")
-        fig.update_layout(height=350, margin=dict(t=40,b=20,l=20,r=20))
-        st.plotly_chart(fig, use_container_width=True, key=f"chart_ts_{uid}")
-        return
+    # Guess smart defaults
+    default_x = "month" if "month" in cat_cols else (cat_cols[0] if cat_cols else all_cols[0])
+    default_y = num_cols[0] if num_cols else all_cols[-1]
+    default_color = next((c for c in cat_cols if c not in [default_x, "facility", "date"]), None)
 
-    # Categorical bar: first cat col vs first num col
-    if cat_cols and num_cols:
-        x_col = cat_cols[0]
-        y_col = num_cols[0]
-        if chart_df[x_col].nunique() <= 20:
-            sorted_df = chart_df.sort_values(y_col, ascending=False).head(15)
-            fig = px.bar(sorted_df, x=x_col, y=y_col,
-                        title=f"{y_col.replace('_',' ').title()} by {x_col.replace('_',' ').title()}",
-                        color=y_col, color_continuous_scale="Greens")
-            fig.update_layout(height=350, margin=dict(t=40,b=60,l=20,r=20),
-                            xaxis_tickangle=-30, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True, key=f"chart_bar_{uid}")
+    # Chart controls
+    with st.expander("📊 Chart Options", expanded=True):
+        ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
+        with ctrl1:
+            chart_type = st.selectbox("Chart Type",
+                ["Bar", "Line", "Area", "Scatter", "Pie"],
+                key=f"ctype_{uid}")
+        with ctrl2:
+            x_axis = st.selectbox("X Axis", all_cols,
+                index=all_cols.index(default_x) if default_x in all_cols else 0,
+                key=f"xaxis_{uid}")
+        with ctrl3:
+            y_axis = st.selectbox("Y Axis", num_cols,
+                index=num_cols.index(default_y) if default_y in num_cols else 0,
+                key=f"yaxis_{uid}")
+        with ctrl4:
+            color_opts = ["None"] + [c for c in cat_cols if c != x_axis]
+            color_col = st.selectbox("Color By", color_opts,
+                index=color_opts.index(default_color) if default_color in color_opts else 0,
+                key=f"color_{uid}")
+            color_col = None if color_col == "None" else color_col
+
+    # Build chart
+    title = f"{y_axis.replace('_',' ').title()} by {x_axis.replace('_',' ').title()}"
+    plot_df = chart_df.sort_values(x_axis).head(50)
+
+    try:
+        if chart_type == "Bar":
+            fig = px.bar(plot_df, x=x_axis, y=y_axis, color=color_col,
+                        title=title, color_continuous_scale="Greens" if not color_col else None)
+            fig.update_layout(xaxis_tickangle=-30)
+        elif chart_type == "Line":
+            fig = px.line(plot_df, x=x_axis, y=y_axis, color=color_col,
+                         markers=True, title=title)
+        elif chart_type == "Area":
+            fig = px.area(plot_df, x=x_axis, y=y_axis, color=color_col, title=title)
+        elif chart_type == "Scatter":
+            y2_opts = [c for c in num_cols if c != y_axis]
+            size_col = y2_opts[0] if y2_opts else None
+            fig = px.scatter(plot_df, x=x_axis, y=y_axis, color=color_col,
+                           size=size_col, title=title, hover_data=all_cols[:5])
+        elif chart_type == "Pie":
+            fig = px.pie(plot_df, names=x_axis, values=y_axis, title=title)
+
+        fig.update_layout(height=380, margin=dict(t=40, b=40, l=20, r=20),
+                         showlegend=True if color_col else False)
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_{uid}")
+    except Exception as e:
+        st.caption(f"Chart error: {e}")
 
 def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None):
     uid = panel_id or label
