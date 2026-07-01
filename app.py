@@ -553,6 +553,45 @@ Question: {question}"""
     except Exception as e:
         return f"Error: {e}"
 
+def auto_chart(df, uid):
+    """Automatically pick the best chart based on data shape."""
+    num_cols = df.select_dtypes(include="number").columns.tolist()
+    cat_cols = df.select_dtypes(exclude="number").columns.tolist()
+    if len(df) < 2 or not num_cols:
+        return
+
+    # Remove total/summary rows for charting
+    chart_df = df[~df.apply(lambda r: r.astype(str).str.upper().eq("TOTAL").any(), axis=1)].copy()
+    if len(chart_df) < 2:
+        return
+
+    # Time series: if month column exists
+    if "month" in chart_df.columns and len(num_cols) >= 1:
+        metric = num_cols[0]
+        color_col = next((c for c in cat_cols if c not in ["month", "facility", "date"]), None)
+        if color_col and chart_df[color_col].nunique() <= 10:
+            fig = px.line(chart_df, x="month", y=metric, color=color_col,
+                         markers=True, title=f"{metric.replace('_',' ').title()} by Month")
+        else:
+            fig = px.bar(chart_df, x="month", y=metric,
+                        title=f"{metric.replace('_',' ').title()} by Month")
+        fig.update_layout(height=350, margin=dict(t=40,b=20,l=20,r=20))
+        st.plotly_chart(fig, use_container_width=True, key=f"chart_ts_{uid}")
+        return
+
+    # Categorical bar: first cat col vs first num col
+    if cat_cols and num_cols:
+        x_col = cat_cols[0]
+        y_col = num_cols[0]
+        if chart_df[x_col].nunique() <= 20:
+            sorted_df = chart_df.sort_values(y_col, ascending=False).head(15)
+            fig = px.bar(sorted_df, x=x_col, y=y_col,
+                        title=f"{y_col.replace('_',' ').title()} by {x_col.replace('_',' ').title()}",
+                        color=y_col, color_continuous_scale="Greens")
+            fig.update_layout(height=350, margin=dict(t=40,b=60,l=20,r=20),
+                            xaxis_tickangle=-30, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True, key=f"chart_bar_{uid}")
+
 def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None):
     uid = panel_id or label
     c1, c2 = st.columns(2)
@@ -565,9 +604,12 @@ def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"xlsx_{uid}")
     st.caption(f"{len(df)} results")
+
     if is_kpi and len(df)==1:
         render_kpi_cards(df.copy())
     elif "month" in df.columns and df["month"].nunique()>1:
+        # Chart first, then tabbed data
+        auto_chart(df, uid)
         months = sorted(df["month"].unique(), reverse=True)
         tabs = st.tabs([str(m) for m in months]+["All Data"])
         for i, month in enumerate(months):
@@ -579,7 +621,11 @@ def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None):
         with tabs[-1]:
             st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=280)
     else:
+        # Chart + table side by side for single-month data with enough rows
+        if len(df) >= 3:
+            auto_chart(df, uid)
         st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=320)
+
     with st.expander("View SQL"):
         st.code(sql, language='sql')
 
