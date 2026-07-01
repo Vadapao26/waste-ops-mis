@@ -787,14 +787,10 @@ if not facility_selected or not time_selected:
     st.stop()
 
 # ── ACTION DISPATCHER ─────────────────────────────────────────────────────────
-# Determine what action to run this render cycle
-action = st.session_state.pop("_action", None)
+# Functions defined BEFORE action is popped
 
 def run_and_show_combined(keys, label):
-    """Run multiple preset queries and render all results inline — no rerun needed."""
-    st.session_state.messages.append({"role": "user", "content": label})
-    with st.chat_message("user"):
-        st.write(label)
+    """Run queries, store results in session state, render."""
     results = []
     for key in keys:
         sql = inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
@@ -802,38 +798,31 @@ def run_and_show_combined(keys, label):
         if error:
             st.error(f"Query failed for {key}: {error}")
         elif df is not None:
-            results.append((key, sql, df, "kpi" in key))
+            results.append((key, sql, df.to_dict("records"), df.columns.tolist(), "kpi" in key))
     if results:
-        msg = f"Loaded {len(results)} analyses."
-        st.session_state.messages.append({"role": "assistant", "content": msg})
-        with st.chat_message("assistant"):
-            st.write(msg)
-        for idx, (key, sql, df, is_kpi) in enumerate(results):
-            st.markdown(f"### {key.split(': ')[1].title()}")
-            panel_label = key.replace(" ", "_").replace(":", "")
-            show_result_panel(df, sql, panel_label, num_months, is_kpi,
-                              panel_id=f"combined_{idx}_{panel_label}_{date_from}")
-            st.divider()
+        st.session_state["_results"] = results
+        st.session_state["_results_label"] = label
+        st.session_state.messages.append({"role": "user", "content": label})
+        st.session_state.messages.append({"role": "assistant", "content": f"Loaded {len(results)} analyses."})
 
 def run_and_show_single(lib_key, is_kpi):
-    """Run a single preset query and render inline."""
+    """Run single query, store result in session state."""
     label = f"{lib_key.title()} | {selected_facility} | {display_time}"
-    st.session_state.messages.append({"role": "user", "content": label})
-    with st.chat_message("user"):
-        st.write(label)
     sql = inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
     df, error = run_query(sql)
     if error:
-        with st.chat_message("assistant"):
-            st.error(f"Query error: {error}")
+        st.session_state.messages.append({"role": "user", "content": label})
+        st.session_state.messages.append({"role": "assistant", "content": f"Error: {error}"})
+        st.session_state["_results"] = None
     else:
-        msg = f"Found {len(df)} results."
-        st.session_state.messages.append({"role": "assistant", "content": msg})
-        with st.chat_message("assistant"):
-            st.write(msg)
         panel_label = lib_key.replace(" ", "_").replace(":", "")
-        show_result_panel(df, sql, panel_label, num_months, is_kpi,
-                          panel_id=f"single_{panel_label}_{date_from}")
+        st.session_state["_results"] = [(lib_key, sql, df.to_dict("records"), df.columns.tolist(), is_kpi)]
+        st.session_state["_results_label"] = label
+        st.session_state.messages.append({"role": "user", "content": label})
+        st.session_state.messages.append({"role": "assistant", "content": f"Found {len(df)} results."})
+
+# Now pop and handle action
+action = st.session_state.pop("_action", None)
 
 # ── HANDLE BUTTON ACTIONS ─────────────────────────────────────────────────────
 if action and action.get("type") == "combined":
@@ -841,6 +830,17 @@ if action and action.get("type") == "combined":
 
 elif action and action.get("type") == "library":
     run_and_show_single(action["key"], action["is_kpi"])
+
+# ── RENDER STORED RESULTS (survives chart widget reruns) ──────────────────────
+if st.session_state.get("_results"):
+    results = st.session_state["_results"]
+    for idx, (key, sql, records, columns, is_kpi) in enumerate(results):
+        df = pd.DataFrame(records, columns=columns)
+        st.markdown(f"### {key.split(': ')[1].title()}")
+        panel_label = key.replace(" ", "_").replace(":", "")
+        show_result_panel(df, sql, panel_label, num_months, is_kpi,
+                          panel_id=f"result_{idx}_{panel_label}_{date_from}")
+        st.divider()
 
 # ── HANDLE CLARIFICATION CHOICE ───────────────────────────────────────────────
 elif action and action.get("type") == "clarification":
