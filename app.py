@@ -86,13 +86,29 @@ st.markdown("""
 html,body,[class*="css"]{font-family:'Inter',sans-serif!important;}
 #MainMenu,footer,header{visibility:hidden;}
 .block-container{padding:1rem 1.5rem!important;max-width:100%!important;}
-section[data-testid="stSidebar"]{background-color:#F7F3EE!important;border-right:1px solid #E8E0D5!important;min-width:320px!important;max-width:320px!important;}
+section[data-testid="stSidebar"]{min-width:320px!important;max-width:320px!important;}
+
+/* Light mode sidebar */
+[data-theme="light"] section[data-testid="stSidebar"],
+.light section[data-testid="stSidebar"]{background-color:#F7F3EE!important;border-right:1px solid #E8E0D5!important;}
+
+/* KPI cards - auto dark/light */
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:1.25rem;}
 .kpi-card{border-radius:10px;padding:0.875rem 1rem;}
+.kpi-label{font-size:10px;color:#9B9490;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
+
+/* Light mode */
 .kpi-sage{background:#E8F0E8;}.kpi-lavender{background:#F0EDF8;}
 .kpi-peach{background:#FDF0E8;}.kpi-amber{background:#FDF6E8;}.kpi-rose{background:#FDF0F2;}
-.kpi-label{font-size:10px;color:#9B9490;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
-.kpi-value{font-size:18px;font-weight:600;color:#2C2A28;}
+.kpi-value{font-size:18px;font-weight:600;color:var(--text-color,#2C2A28);}
+
+/* Dark mode overrides */
+@media(prefers-color-scheme:dark){
+  .kpi-sage{background:#1A2E1A!important;}.kpi-lavender{background:#1E1A2E!important;}
+  .kpi-peach{background:#2E1E0A!important;}.kpi-amber{background:#2E260A!important;}.kpi-rose{background:#2E1A1C!important;}
+  .kpi-value{color:#E8E0D5!important;}
+  section[data-testid="stSidebar"]{background-color:#1A1A1A!important;border-right:1px solid #333!important;}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -301,7 +317,7 @@ QUERY_LIBRARY = {
             SUM(duration_mins) AS total_duration_mins
         FROM training
         {FACILITY_FILTER}
-        GROUP BY month, facility, topic, category
+        GROUP BY TO_CHAR(date::date, 'YYYY-MM'), facility, topic, category
         ORDER BY month DESC, sessions DESC;""",
 
     "training: trainer analysis": """
@@ -327,7 +343,7 @@ QUERY_LIBRARY = {
             ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours
         FROM training
         {FACILITY_FILTER}
-        GROUP BY month, facility, category
+        GROUP BY TO_CHAR(date::date, 'YYYY-MM'), facility, category
         ORDER BY month DESC, sessions DESC;""",
 
     "training: role based attendance": """
@@ -370,11 +386,11 @@ SIDEBAR_GROUPS = {
 # ── HELPERS ───────────────────────────────────────────────────────────────────
 def inject_filters(sql, facility, date_from, date_to):
     if facility == "All Facilities":
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE date>='{date_from}' AND date<='{date_to}'")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND date>='{date_from}' AND date<='{date_to}'")
+        sql = sql.replace("{FACILITY_FILTER}", f"WHERE date::date BETWEEN '{date_from}' AND '{date_to}'")
+        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND date::date BETWEEN '{date_from}' AND '{date_to}'")
     else:
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility='{facility}' AND date>='{date_from}' AND date<='{date_to}'")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility='{facility}' AND date>='{date_from}' AND date<='{date_to}'")
+        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility='{facility}' AND date::date BETWEEN '{date_from}' AND '{date_to}'")
+        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility='{facility}' AND date::date BETWEEN '{date_from}' AND '{date_to}'")
     return sql
 
 def extract_sql(text):
@@ -674,7 +690,7 @@ def auto_chart(df, uid):
 
     # Build chart
     title = f"{y_axis.replace('_',' ').title()} by {x_axis.replace('_',' ').title()}"
-    plot_df = chart_df.sort_values(x_axis).head(50)
+    plot_df = chart_df.sort_values(x_axis)
 
     try:
         if chart_type == "Bar":
