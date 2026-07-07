@@ -524,15 +524,21 @@ NOTE: Use PostgreSQL syntax. Use TO_CHAR(date::date,'YYYY-MM') for monthly group
 def get_clarifications(question, facility, date_from, date_to):
     db_context = get_db_context(facility)
     conv_context = get_conversation_context()
-    prompt = f"""Waste management analyst.
+    prompt = f"""You are a waste operations data analyst assistant.
 {conv_context}
-User asked: "{question}"
-Facility: {facility}, dates {date_from} to {date_to}
+User question: "{question}"
+Facility: {facility} | Date range: {date_from} to {date_to}
 {db_context}
 
-Generate 4-5 clarification options showing HOW to view this data.
-Options must be specific using actual names from the data above.
-Return ONLY a JSON array with "label" and "description" keys. No other text."""
+Generate 4-5 SPECIFIC clarification options that directly answer what the user asked.
+Rules:
+- Each option must be a DIFFERENT angle on the SAME question (not generic options)
+- Use actual column names, metric names, or entity names from the data context
+- Options should be actionable SQL queries (e.g. "By vendor", "Monthly trend", "Top 10 by weight")
+- If question mentions a specific topic (training, inward, outward), ALL options must relate to that topic
+- Do NOT suggest unrelated topics
+Return ONLY a JSON array: [{{"label": "short label", "description": "what this shows"}}]
+No other text, no markdown, no explanation."""
     try:
         response = groq_client.chat.completions.create(
             model=GROQ_MODEL,
@@ -1032,17 +1038,85 @@ elif question:
     import re as re2, calendar as cal2
     date_override_from = date_from
     date_override_to = date_to
-    year_months = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re2.IGNORECASE)
-    month_map2 = {"jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
-                  "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
-    if len(year_months) >= 2:
-        m1, y1 = year_months[0]; m2, y2 = year_months[-1]
-        date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-        last = cal2.monthrange(int(y2), int(month_map2[m2.lower()[:3]]))[1]
-        date_override_to = f"{y2}-{month_map2[m2.lower()[:3]]}-{last}"
-    elif len(year_months) == 1:
-        m1, y1 = year_months[0]
-        date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
+    import datetime as _dt2
+    _today = _dt2.date.today()
+
+    # Relative date parsing
+    q_lower = question.lower()
+    _matched_relative = False
+
+    # "last N months"
+    _lnm = re2.search(r'last\s+(\d+)\s+month', q_lower)
+    if _lnm:
+        n = int(_lnm.group(1))
+        _to_m = _today.replace(day=1) - _dt2.timedelta(days=1)  # end of last month
+        _from_m = (_to_m.replace(day=1) - _dt2.timedelta(days=1))
+        # go back n months
+        _fm_year = _today.year
+        _fm_month = _today.month - n
+        while _fm_month <= 0:
+            _fm_month += 12; _fm_year -= 1
+        date_override_from = f"{_fm_year}-{str(_fm_month).zfill(2)}-01"
+        date_override_to = _today.strftime("%Y-%m-%d")
+        _matched_relative = True
+
+    # "this month"
+    elif "this month" in q_lower:
+        date_override_from = _today.replace(day=1).strftime("%Y-%m-%d")
+        date_override_to = _today.strftime("%Y-%m-%d")
+        _matched_relative = True
+
+    # "last month"
+    elif "last month" in q_lower:
+        _first_this = _today.replace(day=1)
+        _last_prev = _first_this - _dt2.timedelta(days=1)
+        date_override_from = _last_prev.replace(day=1).strftime("%Y-%m-%d")
+        date_override_to = _last_prev.strftime("%Y-%m-%d")
+        _matched_relative = True
+
+    # "last quarter" / "this quarter"
+    elif "quarter" in q_lower:
+        _qm = (_today.month - 1) // 3 * 3 + 1
+        if "last" in q_lower:
+            _qm -= 3
+            if _qm <= 0: _qm += 12
+        date_override_from = f"{_today.year}-{str(_qm).zfill(2)}-01"
+        _qend = _qm + 2
+        date_override_to = f"{_today.year}-{str(_qend).zfill(2)}-{cal2.monthrange(_today.year, _qend)[1]}"
+        _matched_relative = True
+
+    # "this year" / "last year"
+    elif "this year" in q_lower:
+        date_override_from = f"{_today.year}-01-01"
+        date_override_to = _today.strftime("%Y-%m-%d")
+        _matched_relative = True
+    elif "last year" in q_lower:
+        date_override_from = f"{_today.year-1}-01-01"
+        date_override_to = f"{_today.year-1}-12-31"
+        _matched_relative = True
+
+    # "today" / "yesterday"
+    elif "today" in q_lower:
+        date_override_from = date_override_to = _today.strftime("%Y-%m-%d")
+        _matched_relative = True
+    elif "yesterday" in q_lower:
+        _yest = _today - _dt2.timedelta(days=1)
+        date_override_from = date_override_to = _yest.strftime("%Y-%m-%d")
+        _matched_relative = True
+
+    if not _matched_relative:
+        # Fall back to explicit month names
+        year_months = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re2.IGNORECASE)
+        month_map2 = {"jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
+                      "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
+        if len(year_months) >= 2:
+            m1, y1 = year_months[0]; m2, y2 = year_months[-1]
+            date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
+            last = cal2.monthrange(int(y2), int(month_map2[m2.lower()[:3]]))[1]
+            date_override_to = f"{y2}-{month_map2[m2.lower()[:3]]}-{last}"
+        elif len(year_months) == 1:
+            m1, y1 = year_months[0]
+            date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
         last = cal2.monthrange(int(y1), int(month_map2[m1.lower()[:3]]))[1]
         date_override_to = f"{y1}-{month_map2[m1.lower()[:3]]}-{last}"
 
