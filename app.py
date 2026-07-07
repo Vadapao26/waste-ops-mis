@@ -497,28 +497,42 @@ def get_db_context(facility="All Facilities"):
     try:
         ctx = json.load(open(ctx_path))
     except Exception:
-        return ""  # db_context.json missing or unreadable; AI will operate without facility context
-    facilities = list(ctx.keys()) if facility == "All Facilities" else [facility]
+        return ""
     lines = []
+
+    # Always include global context
+    g = ctx.get("_global", {})
+    if g:
+        lines.append("=== TERMINOLOGY ALIASES (treat these as the same thing) ===")
+        for col, aliases in g.get("terminology_aliases", {}).items():
+            lines.append(f"  '{col}' = also called: {', '.join(aliases)}")
+
+        lines.append("\n=== MATERIAL NAME ALIASES ===")
+        for mat, aliases in g.get("material_aliases", {}).items():
+            lines.append(f"  '{mat}' = also called: {', '.join(aliases)}")
+
+        lines.append("\n=== SQL RULES (always follow these) ===")
+        for rule in g.get("sql_rules", []):
+            lines.append(f"  - {rule}")
+
+    # Facility-specific context
+    facilities = [k for k in ctx.keys() if not k.startswith("_")] if facility == "All Facilities" else [facility]
     for f in facilities:
         if f not in ctx: continue
         d = ctx[f]
-        vendor_list = [v[0] + f" (source={v[1]})" if isinstance(v,list) else str(v) for v in d.get("vendors",[])]
-        if vendor_list:
-            lines.append(f"INWARD VENDORS for {f} [column: received_material_from]: " + ", ".join(vendor_list))
-        customers = d.get("customers",[])
-        if customers:
-            lines.append(f"OUTWARD CUSTOMERS for {f} [column: customer]: " + ", ".join(customers))
-        wards = d.get("wards",[])
-        if wards:
-            lines.append(f"WARDS for {f} [column: vendor_location]: " + ", ".join(wards[:20]))
-        in_mats = d.get("inward_materials",[])
-        if in_mats:
-            lines.append(f"INWARD MATERIALS for {f}: " + ", ".join(in_mats))
-        out_mats = d.get("outward_materials",[])
-        if out_mats:
-            lines.append(f"OUTWARD MATERIALS for {f}: " + ", ".join(out_mats))
-    return chr(10).join(lines)
+        lines.append(f"\n=== {f.upper()} FACILITY ===")
+        if d.get("description"):
+            lines.append(f"  About: {d['description']}")
+        if d.get("key_vendors"):
+            lines.append(f"  Key vendors [column: received_material_from]: {', '.join(d['key_vendors'])}")
+        if d.get("key_ward_locations"):
+            lines.append(f"  Ward locations [column: vendor_location]: {', '.join(d['key_ward_locations'][:10])}")
+        if d.get("key_materials"):
+            lines.append(f"  Key materials [column: material]: {', '.join(d['key_materials'])}")
+        if d.get("notes"):
+            lines.append(f"  Notes: {d['notes']}")
+
+    return "\n".join(lines)
 
 def get_conversation_context():
     hist = st.session_state.get("conversation_history",[])

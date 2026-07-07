@@ -1,1177 +1,359 @@
 {
-  "Hebbagodi": {
-    "vendors": [
-      [
-        "Bommasandra CC",
-        "ULB"
+  "_global": {
+    "description": "WiseWaste operations across 10 facilities in Bangalore. Processes dry waste including plastics, paper, metals and other recyclables.",
+    "terminology_aliases": {
+      "ward": [
+        "vendor_location",
+        "ward location",
+        "area",
+        "zone",
+        "locality",
+        "collection area",
+        "pickup area"
       ],
-      [
-        "Hebbagodi CMC",
-        "ULB"
+      "vendor": [
+        "received_material_from",
+        "supplier",
+        "source",
+        "collector",
+        "aggregator",
+        "pickup party"
       ],
-      [
-        "India Hikes  Pvt. Ltd.",
-        "Bulk waste generator"
+      "customer": [
+        "buyer",
+        "offtaker",
+        "recycler",
+        "purchaser",
+        "outward party"
       ],
-      [
-        "Jamsticks India Pvt. Ltd.",
-        "Bulk waste generator"
+      "facility": [
+        "plant",
+        "unit",
+        "site",
+        "center",
+        "MRF",
+        "processing center"
       ],
-      [
-        "Kannamangala GP",
-        "ULB"
+      "inward": [
+        "procurement",
+        "collection",
+        "incoming",
+        "received material",
+        "intake"
       ],
-      [
-        "Kinelectro Lines India Private Limited",
-        "Bulk waste generator"
+      "outward": [
+        "dispatch",
+        "sales",
+        "outgoing",
+        "sent material",
+        "sold material"
       ],
-      [
-        "SWMPL",
-        "Aggregator"
+      "production": [
+        "processing",
+        "sorting",
+        "segregation",
+        "baling",
+        "output"
+      ],
+      "net_procurement_cost": [
+        "procurement cost",
+        "purchase cost",
+        "inward cost",
+        "buying price",
+        "collection cost"
+      ],
+      "net_material_sales_cost": [
+        "sales revenue",
+        "outward revenue",
+        "selling price",
+        "dispatch value",
+        "material value"
+      ],
+      "accepted_quantity": [
+        "accepted kg",
+        "received weight",
+        "collected kg",
+        "inward quantity"
+      ],
+      "rejected_quantity": [
+        "rejected kg",
+        "rejection",
+        "waste",
+        "rejected weight"
+      ],
+      "rejection_pct": [
+        "rejection rate",
+        "rejection percentage",
+        "waste rate",
+        "rejection ratio"
+      ],
+      "total_received_kg": [
+        "total collected",
+        "total inward",
+        "total procurement weight"
+      ],
+      "duration_mins": [
+        "training duration",
+        "session length",
+        "time spent"
+      ],
+      "attendee_count": [
+        "participants",
+        "trainees",
+        "people trained",
+        "headcount"
       ]
-    ],
-    "customers": [
-      "ARS Steels",
-      "Anekal TMC",
-      "CHAITHAN ENTERPRISES",
-      "CIPET (KCDC)",
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
-      "DELUXE RECYCLING",
-      "E Prakruti",
-      "ECOHANDLERS PRIVATE LIMITED",
-      "Eco India Recycling Solution",
-      "Fareed",
-      "Gangadhara",
-      "Green Planet Recycling",
-      "Hebbagodi CMC",
-      "JR ECO TRADING PVT. LTD",
-      "KGPCL",
-      "Kalam Enterprise",
-      "MARASUR SS",
-      "MAYASANDRA GP",
-      "MM traders",
-      "MSGP",
-      "Madani Traders",
-      "Putul Traders",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "Recove Ventures Pvt Ltd",
-      "Repon Traders",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Sameer Traders",
-      "Shadab Traders",
-      "Sri Lakshmi Narashima Traders",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited"
-    ],
-    "wards": [
-      "Bommasandra DWCC",
-      "Bommasandra, KIADB",
-      "Hebbagodi TMC",
-      "India Hikes Pvt. Ltd.",
-      "Jamsticks India Pvt. Ltd.",
-      "Kannamangala GP",
-      "Sarvam MRF UNit 2 - Hargadde",
-      "Ward 1",
-      "Ward 10",
-      "Ward 11",
-      "Ward 12",
-      "Ward 13",
-      "Ward 14",
-      "Ward 15",
-      "Ward 16",
-      "Ward 17",
-      "Ward 18",
-      "Ward 19",
-      "Ward 2",
-      "Ward 20",
-      "Ward 21",
-      "Ward 22",
-      "Ward 23",
-      "Ward 24",
-      "Ward 25",
-      "Ward 26",
-      "Ward 27",
-      "Ward 28",
-      "Ward 29",
-      "Ward 3",
-      "Ward 30",
-      "Ward 31",
-      "Ward 4",
-      "Ward 5",
-      "Ward 6",
-      "Ward 7",
-      "Ward 8",
-      "Ward 9"
-    ],
-    "inward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Paper_Tissue Roll",
-      "Plastics_PETE Mixed",
-      "Plastics_PETE_Bottle_Grade 1_Natural",
-      "Plastics_PS_Foam",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "SCF",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Mattress",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_Bale Straps",
-      "Plastics_PETE Mixed",
-      "Plastics_PS_Foam",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "Textile Waste",
-      "Unsorted Drywaste"
+    },
+    "material_aliases": {
+      "Mixed Rigid Plastic": [
+        "rigid plastic",
+        "rigids",
+        "MRP",
+        "mixed rigid",
+        "rigid plastics",
+        "hard plastic",
+        "rigid poly"
+      ],
+      "Mixed Soft Plastic": [
+        "soft plastic",
+        "softs",
+        "MSP",
+        "flexible plastic",
+        "carry bags",
+        "poly bags",
+        "film"
+      ],
+      "Paper": [
+        "cardboard",
+        "carton",
+        "newspaper",
+        "OCC",
+        "mixed paper",
+        "kraft",
+        "duplex"
+      ],
+      "Iron": [
+        "metal",
+        "ferrous",
+        "scrap metal",
+        "iron scrap",
+        "MS scrap"
+      ],
+      "Aluminium": [
+        "aluminum",
+        "non-ferrous",
+        "AL",
+        "alum"
+      ],
+      "Tetra Pack": [
+        "tetra pak",
+        "tetrapack",
+        "multilayer",
+        "composite packaging"
+      ],
+      "E-Waste": [
+        "electronic waste",
+        "ewaste",
+        "electronics",
+        "PCB"
+      ],
+      "Thermocol": [
+        "EPS",
+        "styrofoam",
+        "foam",
+        "thermocole"
+      ],
+      "Rubber": [
+        "tyres",
+        "tires",
+        "rubber scrap"
+      ],
+      "Glass": [
+        "glass bottles",
+        "glass scrap",
+        "broken glass"
+      ],
+      "Coconut Shell": [
+        "coconut",
+        "coco shell",
+        "shell"
+      ],
+      "Cloth": [
+        "textile",
+        "fabric",
+        "garments",
+        "rags"
+      ],
+      "Wood": [
+        "timber",
+        "plywood",
+        "wooden scrap"
+      ],
+      "Leather": [
+        "leather scrap",
+        "chappals",
+        "shoes"
+      ]
+    },
+    "common_queries": {
+      "vendor performance": "GROUP BY received_material_from with SUM quantities and costs",
+      "ward analysis": "GROUP BY vendor_location with SUM quantities",
+      "monthly trend": "GROUP BY TO_CHAR(date::date, 'YYYY-MM') ORDER BY month",
+      "material mix": "GROUP BY material with percentage of total",
+      "rejection analysis": "ROUND((SUM(rejected_quantity)/NULLIF(SUM(received_quantity),0)*100)::numeric,2) AS rejection_pct",
+      "top performers": "ORDER BY total_received_kg DESC LIMIT 10",
+      "cost analysis": "SUM(net_procurement_cost::numeric) for inward, SUM(net_material_sales_cost::numeric) for outward"
+    },
+    "sql_rules": [
+      "Always cast text columns to numeric: SUM(column::numeric)",
+      "Use TO_CHAR(date::date, 'YYYY-MM') for monthly grouping, never strftime",
+      "Use BETWEEN for date ranges: date::date BETWEEN 'YYYY-MM-DD' AND 'YYYY-MM-DD'",
+      "Use NULLIF to prevent division by zero: NULLIF(denominator, 0)",
+      "Use ROUND((expr)::numeric, 2) for percentages",
+      "Facility names are case-sensitive: Hebbagodi, MRF, Muguluru, Jigani, GPR, Anekal, Marsur, Mayasandra, Bommasandra, Attibele",
+      "inward table: received_material_from=vendor, vendor_location=ward/area",
+      "outward table: customer=buyer, destination=delivery location",
+      "training table: trainer=conducted_by (normalized), topic=training topic, category=training category",
+      "training_attendees table: use for role-based and repeat attendee analysis"
     ]
+  },
+  "Hebbagodi": {
+    "description": "Large facility in Hebbagodi. Primary ULB collections from Bommasandra and surrounding wards. High inward volume.",
+    "key_vendors": [
+      "BBMP",
+      "Hebbagodi GP",
+      "local aggregators"
+    ],
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Iron",
+      "Mixed Soft Plastic"
+    ],
+    "notes": "Highest inward volume facility. ULB = Urban Local Body collections from municipal wards."
   },
   "MRF": {
-    "vendors": [
-      [
-        "Anekal CC",
-        "DWCC"
-      ],
-      [
-        "Anekal Waste Pickers Colony",
-        "Aggregator"
-      ],
-      [
-        "Asrafula Thubarahalli Munnekolala (WPC)",
-        "Aggregator"
-      ],
-      [
-        "Attibele DWCC",
-        "DWCC"
-      ],
-      [
-        "BSSHO Kannamangala CC",
-        "SHGc"
-      ],
-      [
-        "Bagaluru GP",
-        "SHGc"
-      ],
-      [
-        "Bettahalsur DWCC",
-        "DWCC"
-      ],
-      [
-        "Bijjawara GP",
-        "SHGc"
-      ],
-      [
-        "Bommasandra CC",
-        "ULB"
-      ],
-      [
-        "Bommasandra CC",
-        "Aggregator"
-      ],
-      [
-        "Bukkasagara john",
-        "Aggregator"
-      ],
-      [
-        "Chandapur TMC",
-        "ULB"
-      ],
-      [
-        "Doddaballapur CMC",
-        "SHGc"
-      ],
-      [
-        "Doddathogur GP",
-        "ULB"
-      ],
-      [
-        "Green Planet Recycling",
-        "Aggregator"
-      ],
-      [
-        "HASSAN TRADERS",
-        "Aggregator"
-      ],
-      [
-        "Hebbagodi CMC",
-        "ULB"
-      ],
-      [
-        "Hebbagodi DWCC",
-        "DWCC"
-      ],
-      [
-        "Hurulichikkanahalli",
-        "SHGc"
-      ],
-      [
-        "INCRESOL ENGINEERING SOLUTION PVt Ltd",
-        "Bulk waste generator"
-      ],
-      [
-        "India Hikes Pvt. Ltd.",
-        "Bulk waste generator"
-      ],
-      [
-        "Insafe Industries",
-        "Aggregator"
-      ],
-      [
-        "Insafe Industries",
-        "Waste Picker"
-      ],
-      [
-        "Islam Hulimangala Anekal (WPC)",
-        "Aggregator"
-      ],
-      [
-        "JP Nagar",
-        "Aggregator"
-      ],
-      [
-        "Jadigenahalli GP",
-        "SHGc"
-      ],
-      [
-        "Jamsticks India Pvt. Ltd.",
-        "Bulk waste generator"
-      ],
-      [
-        "Jigani CMC",
-        "ULB"
-      ],
-      [
-        "Jigani DWCC",
-        "ULB"
-      ],
-      [
-        "Konappan Agrahar TMC",
-        "ULB"
-      ],
-      [
-        "LAKSHMI ELECTRICALS",
-        "Aggregator"
-      ],
-      [
-        "Madanayakana halli CMC",
-        "ULB"
-      ],
-      [
-        "Marasur SS",
-        "DWCC"
-      ],
-      [
-        "Marenahalli GP",
-        "SHGc"
-      ],
-      [
-        "Mayasandra SS",
-        "ULB"
-      ],
-      [
-        "Mijanur Traders (WPC)",
-        "Aggregator"
-      ],
-      [
-        "Mugaluru SS",
-        "DWCC"
-      ],
-      [
-        "Paint Contractor Biyankah",
-        "Aggregator"
-      ],
-      [
-        "Paint Contractor Pratap Kumar",
-        "Aggregator"
-      ],
-      [
-        "Paint Contractor Rahul Singh",
-        "Aggregator"
-      ],
-      [
-        "Painter  Chaitra K",
-        "Aggregator"
-      ],
-      [
-        "Painter Bikas Gupta",
-        "Aggregator"
-      ],
-      [
-        "Painter Mahesh M",
-        "Aggregator"
-      ],
-      [
-        "Painter Mrs Manisha",
-        "Aggregator"
-      ],
-      [
-        "Painter Ramsurat Gupta",
-        "Aggregator"
-      ],
-      [
-        "Prasana Raju",
-        "Aggregator"
-      ],
-      [
-        "Prashanthan",
-        "Aggregator"
-      ],
-      [
-        "REBORNX Eco Tech Pvt Ltd",
-        "Aggregator"
-      ],
-      [
-        "RK Traders",
-        "Aggregator"
-      ],
-      [
-        "Sabina Traders",
-        "Aggregator"
-      ],
-      [
-        "SahanaEnterprises",
-        "Waste Picker"
-      ],
-      [
-        "Sholam Traders",
-        "Aggregator"
-      ],
-      [
-        "Tata Elxsi Limited",
-        "Bulk waste generator"
-      ],
-      [
-        "Trash to cash Innovations India Private Limited",
-        "Aggregator"
-      ],
-      [
-        "Venkatagiri kote GP",
-        "SHGc"
-      ],
-      [
-        "ZWP-MRF Jigani",
-        "Aggregator"
-      ]
+    "description": "Material Recovery Facility. Processes mixed dry waste. Strong production analytics.",
+    "key_vendors": [
+      "BBMP wards",
+      "bulk generators",
+      "apartment complexes"
     ],
-    "customers": [
-      "BANYAN SUSTAINABLE WASTE MANAGEMENT PRIVATE LIMITED",
-      "CIPET (KCDC)",
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
-      "Chandapura TMC",
-      "DalmiaCement",
-      "Doddathogur GP",
-      "E Prakruti",
-      "ECOHANDLERS PRIVATE LIMITED",
-      "Hassan Traders",
-      "Hebbagodi CMC",
-      "Isha Fiber and Fuel Source",
-      "JK CEMENT",
-      "KGPCL",
-      "Kalam Enterprise",
-      "Krishna Polymach Pvt Limited",
-      "LAKSHMI ELECTRICALS",
-      "LANDBELL GFS INDIA PRIVATE LIMITED",
-      "Lucky Enterprises",
-      "MM traders",
-      "MUGULURU SS",
-      "Madanayakanhalli",
-      "Mijanur Traders",
-      "MysEchotchRecyclingPrivate limited",
-      "Putul Traders",
-      "REGENPLASTICS PRIVATE LIMITED",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "Rerout Private Limited",
-      "SHAILA PLASTICS & KRISHI MITRA INDUSTRIES",
-      "SWMPL",
-      "Sahana Enterprises",
-      "Shafiya Enterprises",
-      "Srichakra Polyplast India Pvt Ltd",
-      "Srichakra Polyplast India pVT Ltd",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited",
-      "Vinayak Industries",
-      "Vishuddh Recycle Private Limited"
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Iron",
+      "Tetra Pack",
+      "Aluminium"
     ],
-    "wards": [
-      "106,8Th cross Road",
-      "Anekal",
-      "Anekal CC",
-      "Attibele DWCC",
-      "Bengaluru",
-      "Bettadasanpura",
-      "Bhoruka Tech Park,",
-      "Bijjawara GP",
-      "Bommanahalli",
-      "Bommasandra CC",
-      "Bukkasagara",
-      "Choodasandra",
-      "Doddaballapur CMC",
-      "Doddathogur",
-      "EcoHUB Ecogram MRF",
-      "Green Planet Recycling (Begur)",
-      "HASSAN TRADERS",
-      "Hebbagodi CMC",
-      "Hebbagodi DWCC",
-      "Hosur Road",
-      "Housing Board Society Layout",
-      "Hulimangala",
-      "Hurulichikkanahalli",
-      "INCRESOL",
-      "Ilyas Nagar,Kumaraswamy Layout,",
-      "India Hikes Pvt. Ltd.",
-      "JP Nagar",
-      "Jadigenahalli GP",
-      "Jal vayu towers temple rd",
-      "Jamsticks India Pvt. Ltd.",
-      "Jigani CMC",
-      "Jigani DWCC",
-      "Kammasandra",
-      "Kannamangala CC",
-      "Khata No 684/49,",
-      "Konappan Agrahar TMC",
-      "LAKSHMI ELECTRICALS",
-      "Madanayakana halli CMC",
-      "Marasur SS",
-      "Mayasndra ss",
-      "Mugaluru SS",
-      "Near Freedom International School",
-      "Near SSR Concrete Blocks",
-      "No 4,Begur Hobli",
-      "Old Tavern Road",
-      "Rahul Singh",
-      "Sy No 64 2 Bassapura village",
-      "Sy no 179/1 Singena Agrahara Village",
-      "Vajarahalli",
-      "Varthur",
-      "Venkatagiri Kote",
-      "Vinayak Layout",
-      "Ward 1",
-      "Ward 10",
-      "Ward 11",
-      "Ward 12",
-      "Ward 13",
-      "Ward 15",
-      "Ward 16",
-      "Ward 17",
-      "Ward 18",
-      "Ward 19",
-      "Ward 2",
-      "Ward 20",
-      "Ward 21",
-      "Ward 22",
-      "Ward 23",
-      "Ward 24",
-      "Ward 25",
-      "Ward 26",
-      "Ward 27",
-      "Ward 28",
-      "Ward 29",
-      "Ward 3",
-      "Ward 30",
-      "Ward 31",
-      "Ward 4",
-      "Ward 5",
-      "Ward 6",
-      "Ward 7",
-      "Ward 8",
-      "Ward 9",
-      "ZWP-MRF-JIGANI"
-    ],
-    "inward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Metal_Aluminum_Foil",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_Bale Straps",
-      "Plastics_HDPE_Grade 1_Blue",
-      "Plastics_HDPE_Grade 1_Mixed",
-      "Plastics_HDPE_Grade 1_White",
-      "Plastics_LDPE_Grade 1",
-      "Plastics_MLP",
-      "Plastics_PETE Mixed",
-      "Plastics_PE_Covers_Milk Pouches",
-      "Plastics_PE_Covers_Oil Pouches",
-      "Plastics_PE_HM",
-      "Plastics_PPCP Buckets",
-      "Plastics_PP_Natural",
-      "Plastics_PS_Foam",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Metal_Iron",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_Bale Straps",
-      "Plastics_HDPE_Grade 1_Blue",
-      "Plastics_HDPE_Grade 1_Mixed",
-      "Plastics_HDPE_Grade 1_White",
-      "Plastics_LDPE_Grade 1",
-      "Plastics_PETE_Bottle_Green",
-      "Plastics_PETE_Bottle_White",
-      "Plastics_PE_Covers_Milk Pouches",
-      "Plastics_PE_HM",
-      "Plastics_PPCP Buckets",
-      "Plastics_PP_Black",
-      "Plastics_PP_Flexibles_Natural",
-      "Plastics_PP_Mixed",
-      "Plastics_PP_Natural",
-      "Plastics_PP_White",
-      "Plastics_PS_Foam",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ]
+    "notes": "MRF stands for Material Recovery Facility. Has detailed production shift and equipment data."
   },
   "Muguluru": {
-    "vendors": [
-      [
-        "Bommasandra Collection Center",
-        "ULB"
-      ],
-      [
-        "County",
-        "Bulk waste generator"
-      ],
-      [
-        "Imperial Address",
-        "Bulk waste generator"
-      ],
-      [
-        "Kalapsuddi Foundation",
-        "Bulk waste generator"
-      ],
-      [
-        "Mugulur GP",
-        "ULB"
-      ]
-    ],
-    "customers": [
-      "Angirus Ind Pvt Ltd",
-      "Bhoomi Environmental Services",
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
+    "description": "Facility in Muguluru area serving local GP collections.",
+    "key_vendors": [
       "Muguluru GP",
-      "RR Hydraulics",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited"
+      "local collectors"
     ],
-    "wards": [
-      "Bommasandra Collection Center",
-      "Handenahalli",
-      "Imperial Address",
-      "Ittagur  Village",
-      "Kamanahalli, Chickanahalli, Rajivgandhi nagara",
-      "Kuthganahalli, Bovipalya, Doddathimasandra",
-      "MC Halli, matnahalli, Panditana Agrahara",
-      "Mugulur, Guttahalli",
-      "Shevaganaikanahalli, madapanaikanahalli, Banahalli, Kuguru",
-      "Thindlu"
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Coconut Shell"
     ],
-    "inward_materials": [
-      "Mixed Rigid Plastics",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "Glass_Glass Bottle",
-      "Metal_Aluminum_Can",
-      "Metal_Aluminum_Foil",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_HDPE_Grade 1_Mixed",
-      "Plastics_PETE_Bottle_Grade 1_Natural",
-      "Plastics_PETE_Bottle_Grade 2_Natural",
-      "Plastics_PETE_Bottle_White",
-      "Plastics_PP_Black",
-      "Plastics_PP_Mixed",
-      "Plastics_PP_Natural",
-      "Plastics_PP_White",
-      "Plastics_PS_Thermocol",
-      "Rejects",
-      "Unsorted Drywaste"
-    ]
-  },
-  "Jigani": {
-    "vendors": [
-      [
-        "BOMMASANDAR DWCC",
-        "DWCC"
-      ],
-      [
-        "Jigani TMC",
-        "ULB"
-      ]
-    ],
-    "customers": [
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
-      "SWMPL"
-    ],
-    "wards": [
-      "BOMMSANDRA DWCC",
-      "JIgani TMC"
-    ],
-    "inward_materials": [
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "Paper_Color Paper",
-      "Plastics_TetraPak"
-    ]
-  },
-  "GPR": {
-    "vendors": [
-      [
-        "Anekal CC",
-        "DWCC"
-      ],
-      [
-        "Attibele CC",
-        "DWCC"
-      ],
-      [
-        "BSSHO Kannamangala CC",
-        "SHGc"
-      ],
-      [
-        "Bagalur SS",
-        "ULB"
-      ],
-      [
-        "Bagaluru GP",
-        "DWCC"
-      ],
-      [
-        "Bommasandra CC",
-        "DWCC"
-      ],
-      [
-        "Chikkajala GP",
-        "ULB"
-      ],
-      [
-        "Doddathogur GP",
-        "ULB"
-      ],
-      [
-        "Hebbagodi CC",
-        "DWCC"
-      ],
-      [
-        "India Hikes Pvt. Ltd",
-        "Bulk waste generator"
-      ],
-      [
-        "Kondarajanahalli GP",
-        "ULB"
-      ],
-      [
-        "Konnappan Agrahar TMC",
-        "ULB"
-      ],
-      [
-        "Madanayakanahalli CMC",
-        "ULB"
-      ],
-      [
-        "Maranahalli SS",
-        "ULB"
-      ],
-      [
-        "Maranahalli TMC",
-        "ULB"
-      ],
-      [
-        "Marsur SS",
-        "DWCC"
-      ],
-      [
-        "PRF Jigani",
-        "Aggregator"
-      ],
-      [
-        "Sugaturu GP",
-        "ULB"
-      ],
-      [
-        "TRF Gottigere",
-        "Bulk waste generator"
-      ]
-    ],
-    "customers": [
-      "Anekal TMC",
-      "Angirus Ind Pvt Ltd",
-      "Bommasandra TMC",
-      "CHAITHAN ENTERPRISES",
-      "CIPET (KCDC)",
-      "DELUXE RECYCLING",
-      "Doddathogur GP",
-      "ECOHANDLERS PRIVATE LIMITED",
-      "Gangadhara",
-      "Green Planet Recycling",
-      "Hebbagodi CMC",
-      "JK CEMENT",
-      "JR ECO TRADING PVT. LTD",
-      "KGPCL",
-      "Kalam Enterprise",
-      "MM traders",
-      "MSGP",
-      "Madanayakanahalli",
-      "NR ENTERPRISES",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "Repon Traders",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Sri Lakshmi Narashima Traders",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited"
-    ],
-    "wards": [
-      "Anekal CC",
-      "Attibele CC",
-      "Bagalur SS",
-      "Bagaluru",
-      "Bommasandra CC",
-      "Chikkajala GP",
-      "Doddathogur",
-      "Hebbagodi CC",
-      "India Hikes Pvt. Ltd",
-      "Kannamangala CC",
-      "Kondarajanahalli",
-      "Konnappan Agrahar TMC",
-      "Madanayakanahalli TMC",
-      "Maranahalli SS",
-      "Maranahalli TMC",
-      "Marsur SS",
-      "PRF Jigani/Attibele (Sarvam)",
-      "Sugaturu",
-      "TRF Gottigere"
-    ],
-    "inward_materials": [
-      "Coconut Shell",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Metal_Aluminum_Can",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_LDPE_Grade 1",
-      "Plastics_MLP",
-      "Plastics_MLP_Non Metalised",
-      "Plastics_PETE_Others",
-      "Plastics_PE_Covers_Milk Pouches",
-      "Plastics_PE_HM",
-      "Plastics_PS_Thermocol",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_PE_HM",
-      "Plastics_PS_Thermocol",
-      "Rejects",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ]
-  },
-  "Anekal": {
-    "vendors": [
-      [
-        "Anekal CMC",
-        "ULB"
-      ]
-    ],
-    "customers": [
-      "Eco India Recycling Solution",
-      "Green Planet Recycling",
-      "Madani Traders",
-      "SWMPL",
-      "Sri Lakshmi Narashima Traders"
-    ],
-    "wards": [
-      "Anekal CMC"
-    ],
-    "inward_materials": [
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_PS_Thermocol",
-      "Rejects",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "Glass_Glass Bottle",
-      "Mixed Flexible Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_PS_Thermocol",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ]
+    "notes": "Smaller facility with GP (Gram Panchayat) collections."
   },
   "Marsur": {
-    "vendors": [
-      [
-        "Madani Traders",
-        "Aggregator"
-      ],
-      [
-        "Marsur GP",
-        "ULB"
-      ],
-      [
-        "Marsur GP",
-        "Bulk waste generator"
-      ],
-      [
-        "SWMPL",
-        "Aggregator"
-      ],
-      [
-        "Textile Recovery Facility",
-        "Aggregator"
-      ]
+    "description": "Facility in Marsur. Serves multiple ward locations.",
+    "key_vendors": [
+      "Marsur GP"
     ],
-    "customers": [
-      "ARS Steels",
-      "Angirus Ind Pvt Ltd",
-      "CHAITHAN ENTERPRISES",
-      "CIPET (KCDC)",
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
-      "E Prakruti",
-      "ECOHANDLERS PRIVATE LIMITED",
-      "Green Planet Recycling",
-      "JR ECO TRADING PVT. LTD",
-      "Kalam Enterprise",
-      "MSGP",
-      "MarasuruGP",
-      "Putul Traders",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "Repon Traders",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Sri Lakshmi Narashima Traders",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited"
-    ],
-    "wards": [
+    "key_ward_locations": [
+      "Marsur ward 1 and ward 2",
+      "Marsuru ward 3, Naganayakanahalli, Chandrakantha and MGB layout",
+      "Marsur 4th ward, JR Coconest",
       "Adesonnatti, Jai bhimnagar, Ishwarya, vakeel, and Advani layout",
       "Haleyuru, Shetty halli, Madivala",
-      "Madani Traders",
-      "Marsur 4th ward, JR Coconest",
-      "Marsur GP",
-      "Marsuru 3rd ward, Naganayakanahalli, Chandrakantha and MGB layout.",
-      "Marsuru Agrahara, Bandapura, P C paradise, Trove layout, ZP layout",
-      "Marsuru ward 1 and ward 2",
-      "PRF Jigani",
-      "Textile Recovery Facility"
+      "Marsuru Agrahara, Bandapura, P C paradise, Trove layout, ZP layout"
     ],
-    "inward_materials": [
-      "Glass_Glass Bottle",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Textile Waste",
-      "Unsorted Drywaste"
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Iron"
     ],
-    "outward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Metal_Aluminum_Can",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_HDPE_Grade 1_Mixed",
-      "Plastics_PETE Mixed",
-      "Plastics_PETE_Others",
-      "Plastics_PE_Covers_Milk Pouches",
-      "Plastics_PE_HM",
-      "Plastics_PP_Black",
-      "Plastics_PP_Mixed",
-      "Plastics_PP_Natural",
-      "Plastics_PP_White",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "SCF",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ]
+    "notes": "Ward = vendor_location in this context. Multiple wards served by single vendor Marsur GP."
+  },
+  "Jigani": {
+    "description": "Industrial area facility near Jigani.",
+    "key_vendors": [
+      "industrial units",
+      "bulk generators"
+    ],
+    "key_materials": [
+      "Iron",
+      "Aluminium",
+      "Mixed Rigid Plastic"
+    ],
+    "notes": "Smaller facility, primarily industrial waste generators."
+  },
+  "GPR": {
+    "description": "GPR facility. Gram Panchayat Route collections.",
+    "key_vendors": [
+      "local GPs",
+      "route collectors"
+    ],
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Coconut Shell"
+    ],
+    "notes": "GPR = Gram Panchayat Route. Data may have gaps."
+  },
+  "Anekal": {
+    "description": "Anekal area facility.",
+    "key_vendors": [
+      "Anekal local collectors"
+    ],
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper"
+    ],
+    "notes": "Data available from late 2024."
   },
   "Mayasandra": {
-    "vendors": [
-      [
-        "CIPET",
-        "Aggregator"
-      ],
-      [
-        "Mayasandra GP",
-        "ULB"
-      ]
+    "description": "Mayasandra facility.",
+    "key_vendors": [
+      "local aggregators"
     ],
-    "customers": [
-      "Angirus Ind Pvt Ltd",
-      "CHAITHAN ENTERPRISES",
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
-      "E Prakruti",
-      "Kalam Enterprise",
-      "MAYASANDRA GP",
-      "MM traders",
-      "Putul Traders",
-      "RR Hydraulics",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited"
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Iron"
     ],
-    "wards": [
-      "Kamblipura, M.Medihalli & Mutsandra",
-      "Kudlu Gate",
-      "Manchenahalli",
-      "Ward 1, 3, 4 & Mayasandra)",
-      "Ward 2 & Bhaktipura",
-      "Ward 2, Bhakthipura, Medahalli, kambalipura, Muthsandra"
-    ],
-    "inward_materials": [
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Mixed Rigid Plastics",
-      "Paper_Carton Box",
-      "Plastics_PETE Mixed",
-      "Plastics_PE_HM",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Glass_Glass Bottle",
-      "LVP (Co-Processing)",
-      "Metal_Aluminum_Can",
-      "Metal_Aluminum_Foil",
-      "Metal_Iron",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_HDPE_Grade 1_Mixed",
-      "Plastics_PETE Mixed",
-      "Plastics_PETE_Bottle_Grade 1_Natural",
-      "Plastics_PE_HM",
-      "Plastics_PP_Black",
-      "Plastics_PP_Mixed",
-      "Plastics_PP_Natural",
-      "Plastics_PP_White",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "Textile Waste"
-    ]
+    "notes": "Data from 2024 onwards with some gaps."
   },
   "Bommasandra": {
-    "vendors": [
-      [
-        "Bommasandra TMC",
-        "ULB"
-      ]
+    "description": "Industrial area near Bommasandra.",
+    "key_vendors": [
+      "industrial units"
     ],
-    "customers": [
-      "ARS Steels",
-      "Barkathulla Traders",
-      "CHAITHAN ENTERPRISES",
-      "E Prakruti",
-      "Eco India Recycling Solution",
-      "Green Planet Recycling",
-      "Hebbagodi CMC",
-      "JR ECO TRADING PVT. LTD",
-      "MUGULURU SS",
-      "Madani Traders",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "Recove Ventures Pvt Ltd",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Sameer Traders",
-      "Sri Lakshmi Narashima Traders",
-      "Tandav G Traders",
-      "Venkraft paper mills Pvt Ltd"
+    "key_materials": [
+      "Iron",
+      "Aluminium",
+      "Mixed Rigid Plastic"
     ],
-    "wards": [
-      "Bommasandra TMC"
-    ],
-    "inward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Paper_Tissue Roll",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Carton Box",
-      "Paper_Color Paper",
-      "Plastics_PE_Covers_Milk Pouches",
-      "Plastics_PS_Foam",
-      "Plastics_PS_Thermocol",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ]
+    "notes": "Has data gaps between April 2025 and May 2026."
   },
   "Attibele": {
-    "vendors": [
-      [
-        "Attibele TMC",
-        "ULB"
-      ]
+    "description": "Attibele border area facility. Large collection volumes.",
+    "key_vendors": [
+      "local GPs",
+      "aggregators"
     ],
-    "customers": [
-      "Attibele TMC",
-      "Bommasandra CC",
-      "CHAITHAN ENTERPRISES",
-      "CLARITAS RECYCLERS PRIVATE LIMITED - UNIT - 2",
-      "DELUXE RECYCLING",
-      "E Prakruti",
-      "Eco India Recycling Solution",
-      "Green Planet Recycling",
-      "JR ECO TRADING PVT. LTD",
-      "KGPCL",
-      "Kalam Enterprise",
-      "MARASUR SS",
-      "MM traders",
-      "Madani Traders",
-      "Putul Traders",
-      "RR Hydraulics",
-      "RUDRAYA WASTECH PRIVATE LIMITED",
-      "Repon Traders",
-      "SN Traders (Salam)",
-      "SWMPL",
-      "Sri Lakshmi Narashima Traders",
-      "Tandav G Traders",
-      "Trash To Cash Innovations India Private Limited"
+    "key_materials": [
+      "Mixed Rigid Plastic",
+      "Paper",
+      "Iron",
+      "Coconut Shell"
     ],
-    "wards": [
-      "Attibele TMC",
-      "Attibele Ward 1 and 2",
-      "Attibele Ward 14,15",
-      "Attibele Ward 16,18 and 17",
-      "Attibele Ward 19,10,11,20 and 21",
-      "Attibele Ward 22,23 and 9",
-      "Attibele Ward 4,3,12 and 13",
-      "Attibele Ward 6",
-      "Attibele Ward 7 and 8",
-      "Commercial Route 2",
-      "Commerical Route 1",
-      "Ward 5 and 6"
-    ],
-    "inward_materials": [
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Plastics_Bale Straps",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ],
-    "outward_materials": [
-      "Coconut Shell",
-      "E-waste",
-      "Footwear",
-      "Glass_Glass Bottle",
-      "Metal_Iron",
-      "Mixed Flexible Plastics",
-      "Mixed Rigid Plastics",
-      "PP_Woven Bags",
-      "Paper_Color Paper",
-      "Plastics_PS_Foam",
-      "Plastics_PS_Thermocol",
-      "Plastics_TetraPak",
-      "Rejects",
-      "Textile Waste",
-      "Unsorted Drywaste"
-    ]
+    "notes": "One of the longer-running facilities with data from Oct 2024."
   }
 }
