@@ -63,8 +63,40 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 def get_engine():
     return create_engine(SUPABASE_URL, pool_pre_ping=True)
 
+def sanitize_sql(sql):
+    """Auto-cast text columns inside SUM/AVG/ROUND to ::numeric to prevent sum(text) errors."""
+    import re as _re
+    # Known text columns in our schema that need casting
+    text_cols = [
+        'value_of_accepted_material', 'net_procurement_cost', 'transportation_cost',
+        'loading_cost', 'additional_cost', 'net_material_sales_cost',
+        'total_incentive_cost', 'rate', 'amount', 'bill_amount',
+        'value_of_material', 'incentive'
+    ]
+    for col in text_cols:
+        # SUM(col) -> SUM(col::numeric)
+        sql = _re.sub(
+            rf'SUM\(\s*{col}\s*\)',
+            f'SUM({col}::numeric)',
+            sql, flags=_re.IGNORECASE
+        )
+        # AVG(col) -> AVG(col::numeric)
+        sql = _re.sub(
+            rf'AVG\(\s*{col}\s*\)',
+            f'AVG({col}::numeric)',
+            sql, flags=_re.IGNORECASE
+        )
+        # COALESCE(col, 0) -> COALESCE(col::numeric, 0)
+        sql = _re.sub(
+            rf'COALESCE\(\s*{col}\s*,',
+            f'COALESCE({col}::numeric,',
+            sql, flags=_re.IGNORECASE
+        )
+    return sql
+
 def run_query(sql):
     try:
+        sql = sanitize_sql(sql)
         engine = get_engine()
         with engine.connect() as conn:
             df = pd.read_sql_query(text(sql), conn)
