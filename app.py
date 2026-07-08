@@ -762,8 +762,18 @@ def auto_chart(df, uid):
         elif chart_type == "Pie":
             fig = px.pie(plot_df, names=x_axis, values=y_axis, title=title)
 
-        fig.update_layout(height=380, margin=dict(t=40, b=40, l=20, r=20),
-                         showlegend=True if color_col else False)
+        fig.update_layout(
+            height=380,
+            margin=dict(t=40, b=60, l=20, r=20),
+            showlegend=True if color_col else False,
+            xaxis=dict(
+                tickangle=-30,
+                tickfont=dict(size=11),
+                # Format YYYY-MM as "Jan 2026" for readability
+                tickformat="%b %Y" if x_axis == "month" else None,
+            ),
+            yaxis=dict(tickfont=dict(size=11)),
+        )
         st.plotly_chart(fig, use_container_width=True, key=f"chart_{uid}")
     except Exception as e:
         st.caption(f"Chart error: {e}")
@@ -1151,20 +1161,32 @@ elif question:
         _matched_relative = True
 
     if not _matched_relative:
-        # Fall back to explicit month names
-        year_months = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re2.IGNORECASE)
+        # Fall back to explicit month names — with OR without year
         month_map2 = {"jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
                       "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
+        _cy = str(_today.year)  # current year as default
+
+        # Try with year first: "Jan 2026"
+        year_months = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re2.IGNORECASE)
+
+        # If no year found, try month names alone: "Jan - March", "Jan to March"
+        if not year_months:
+            months_only = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*", question, re2.IGNORECASE)
+            if len(months_only) >= 2:
+                year_months = [(months_only[0], _cy), (months_only[-1], _cy)]
+            elif len(months_only) == 1:
+                year_months = [(months_only[0], _cy)]
+
         if len(year_months) >= 2:
             m1, y1 = year_months[0]; m2, y2 = year_months[-1]
             date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-            last = cal2.monthrange(int(y2), int(month_map2[m2.lower()[:3]]))[1]
-            date_override_to = f"{y2}-{month_map2[m2.lower()[:3]]}-{last}"
+            _last2 = cal2.monthrange(int(y2), int(month_map2[m2.lower()[:3]]))[1]
+            date_override_to = f"{y2}-{month_map2[m2.lower()[:3]]}-{_last2}"
         elif len(year_months) == 1:
             m1, y1 = year_months[0]
             date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-        last = cal2.monthrange(int(y1), int(month_map2[m1.lower()[:3]]))[1]
-        date_override_to = f"{y1}-{month_map2[m1.lower()[:3]]}-{last}"
+            _last1 = cal2.monthrange(int(y1), int(month_map2[m1.lower()[:3]]))[1]
+            date_override_to = f"{y1}-{month_map2[m1.lower()[:3]]}-{_last1}"
 
     with st.spinner("Understanding your question..."):
         clarifications = get_clarifications(question, selected_facility, date_override_from, date_override_to)
