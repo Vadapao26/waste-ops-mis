@@ -1082,9 +1082,9 @@ elif question:
     st.session_state.messages.append({"role": "user", "content": question})
 
     import re as re2, calendar as cal2
+    import datetime as _dt2
     date_override_from = date_from
     date_override_to = date_to
-    import datetime as _dt2
     _today = _dt2.date.today()
 
     # Relative date parsing
