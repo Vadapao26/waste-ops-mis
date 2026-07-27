@@ -1,28 +1,42 @@
-name: Weekly Sheets → Supabase Sync
+name: Sheets → Supabase Sync
 
 on:
   schedule:
-    # Every Monday at 6:00 AM IST (00:30 UTC)
+    # Monday at 6:00 AM IST (00:30 UTC) — full data sync after weekend
     - cron: '30 0 * * 1'
-  workflow_dispatch:  # Allow manual trigger from GitHub UI
+    # Thursday at 6:00 AM IST (00:30 UTC) — mid-week keep-alive + sync
+    - cron: '30 0 * * 4'
+  workflow_dispatch:  # Allow manual trigger from GitHub UI at any time
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+
+    # ── Timeout ───────────────────────────────────────────────────────────────
+    # 10 facilities x ~3 min each + mapping sheet + buffer = ~45 min max
+    # Previous runs completed in ~7 min but Google Sheets API can be slow
+    # under rate limits. 60 min gives headroom without wasting Action minutes.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install dependencies
         run: |
-          pip install gspread google-auth pandas sqlalchemy psycopg2-binary
+          pip install \
+            gspread \
+            google-auth \
+            pandas \
+            sqlalchemy \
+            psycopg2-binary \
+            openpyxl \
+            tenacity
 
       - name: Run sync
         env:
