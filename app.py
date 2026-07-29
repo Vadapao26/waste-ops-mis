@@ -403,6 +403,134 @@ QUERY_LIBRARY = {
         GROUP BY facility, attendee_name, attendee_role
         HAVING COUNT(DISTINCT training_code) > 1
         ORDER BY sessions_attended DESC;""",
+
+    # ── ENVIRONMENTAL IMPACT ──────────────────────────────────────────────────
+    "impact: inward kpi": """
+        SELECT
+            COUNT(DISTINCT i.received_material_from) AS total_vendors,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000)::numeric,3) AS total_inward_mt,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000/26)::numeric,3) AS avg_tpd,
+            COUNT(DISTINCT COALESCE(v.source_type,'Unknown')) AS source_types
+        FROM inward i
+        LEFT JOIN vendor_map v
+            ON LOWER(TRIM(i.received_material_from))=LOWER(TRIM(v.vendor_name))
+            AND LOWER(TRIM(i.vendor_location))=LOWER(TRIM(v.vendor_location))
+        {FACILITY_FILTER};""",
+
+    "impact: inward by source type": """
+        SELECT
+            TO_CHAR(i.date::date,'YYYY-MM') AS month,
+            i.facility,
+            COALESCE(v.source_type,'Unknown') AS source_type,
+            COUNT(DISTINCT i.received_material_from) AS unique_vendors,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000)::numeric,3) AS total_mt,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000/26)::numeric,3) AS avg_tpd
+        FROM inward i
+        LEFT JOIN vendor_map v
+            ON LOWER(TRIM(i.received_material_from))=LOWER(TRIM(v.vendor_name))
+            AND LOWER(TRIM(i.vendor_location))=LOWER(TRIM(v.vendor_location))
+        {FACILITY_FILTER}
+        GROUP BY TO_CHAR(i.date::date,'YYYY-MM'),i.facility,COALESCE(v.source_type,'Unknown')
+        ORDER BY month DESC,total_mt DESC;""",
+
+    "impact: inward by material category": """
+        SELECT
+            TO_CHAR(i.date::date,'YYYY-MM') AS month,
+            i.facility,
+            COALESCE(m.material_category,'Unknown') AS material_category,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000)::numeric,3) AS total_mt,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000*100/
+                NULLIF(SUM(SUM(i.accepted_quantity::numeric)) OVER(PARTITION BY TO_CHAR(i.date::date,'YYYY-MM'),i.facility),0))::numeric,2) AS pct_of_total
+        FROM inward i
+        LEFT JOIN material_map m ON LOWER(TRIM(i.material))=LOWER(TRIM(m.material_name))
+        {FACILITY_FILTER}
+        GROUP BY TO_CHAR(i.date::date,'YYYY-MM'),i.facility,COALESCE(m.material_category,'Unknown')
+        ORDER BY month DESC,total_mt DESC;""",
+
+    "impact: dispatch kpi": """
+        SELECT
+            COUNT(DISTINCT o.customer) AS total_customers,
+            ROUND((SUM(o.dispatched_quantity::numeric)/1000)::numeric,3) AS total_dispatched_mt,
+            ROUND((SUM(CASE WHEN COALESCE(c.facility_type,'')='Recycler'
+                THEN o.dispatched_quantity::numeric ELSE 0 END)/1000)::numeric,3) AS recycled_mt,
+            ROUND((SUM(CASE WHEN COALESCE(c.facility_type,'')='Co-Processing'
+                THEN o.dispatched_quantity::numeric ELSE 0 END)/1000)::numeric,3) AS co_processed_mt,
+            ROUND((SUM(CASE WHEN COALESCE(c.facility_type,'')='Returned to Source'
+                THEN o.dispatched_quantity::numeric ELSE 0 END)/1000)::numeric,3) AS returned_mt,
+            ROUND((SUM(CASE WHEN COALESCE(c.facility_type,'') NOT IN ('Returned to Source')
+                THEN o.dispatched_quantity::numeric ELSE 0 END)/
+                NULLIF(SUM(o.dispatched_quantity::numeric),0)*100)::numeric,2) AS recovery_rate_pct
+        FROM outward o
+        LEFT JOIN customer_map c
+            ON LOWER(TRIM(o.customer))=LOWER(TRIM(c.customer_name))
+            AND LOWER(TRIM(o.destination))=LOWER(TRIM(c.destination_name))
+        {FACILITY_FILTER};""",
+
+    "impact: dispatch by destination type": """
+        SELECT
+            TO_CHAR(o.date::date,'YYYY-MM') AS month,
+            o.facility,
+            COALESCE(c.facility_type,'Unknown') AS destination_type,
+            COALESCE(c.authorization,'Unknown') AS authorization,
+            COUNT(DISTINCT o.customer) AS unique_customers,
+            ROUND((SUM(o.dispatched_quantity::numeric)/1000)::numeric,3) AS total_mt
+        FROM outward o
+        LEFT JOIN customer_map c
+            ON LOWER(TRIM(o.customer))=LOWER(TRIM(c.customer_name))
+            AND LOWER(TRIM(o.destination))=LOWER(TRIM(c.destination_name))
+        {FACILITY_FILTER}
+        GROUP BY TO_CHAR(o.date::date,'YYYY-MM'),o.facility,COALESCE(c.facility_type,'Unknown'),COALESCE(c.authorization,'Unknown')
+        ORDER BY month DESC,total_mt DESC;""",
+
+    "impact: dispatch by material category": """
+        SELECT
+            TO_CHAR(o.date::date,'YYYY-MM') AS month,
+            o.facility,
+            COALESCE(m.material_category,'Unknown') AS material_category,
+            COALESCE(c.facility_type,'Unknown') AS destination_type,
+            ROUND((SUM(o.dispatched_quantity::numeric)/1000)::numeric,3) AS total_mt
+        FROM outward o
+        LEFT JOIN material_map m ON LOWER(TRIM(o.material))=LOWER(TRIM(m.material_name))
+        LEFT JOIN customer_map c
+            ON LOWER(TRIM(o.customer))=LOWER(TRIM(c.customer_name))
+            AND LOWER(TRIM(o.destination))=LOWER(TRIM(c.destination_name))
+        {FACILITY_FILTER}
+        GROUP BY TO_CHAR(o.date::date,'YYYY-MM'),o.facility,COALESCE(m.material_category,'Unknown'),COALESCE(c.facility_type,'Unknown')
+        ORDER BY month DESC,total_mt DESC;""",
+
+    "impact: recovery rate trend": """
+        SELECT
+            TO_CHAR(o.date::date,'YYYY-MM') AS month,
+            o.facility,
+            ROUND((SUM(o.dispatched_quantity::numeric)/1000)::numeric,3) AS total_dispatched_mt,
+            ROUND((SUM(CASE WHEN COALESCE(c.facility_type,'') NOT IN ('Returned to Source')
+                THEN o.dispatched_quantity::numeric ELSE 0 END)/1000)::numeric,3) AS dispatched_excl_returns_mt,
+            ROUND((SUM(CASE WHEN COALESCE(c.facility_type,'') NOT IN ('Returned to Source')
+                THEN o.dispatched_quantity::numeric ELSE 0 END)/
+                NULLIF(SUM(o.dispatched_quantity::numeric),0)*100)::numeric,2) AS recovery_rate_pct
+        FROM outward o
+        LEFT JOIN customer_map c
+            ON LOWER(TRIM(o.customer))=LOWER(TRIM(c.customer_name))
+            AND LOWER(TRIM(o.destination))=LOWER(TRIM(c.destination_name))
+        {FACILITY_FILTER}
+        GROUP BY month,o.facility
+        ORDER BY month DESC;""",
+
+    "impact: vendor coverage": """
+        SELECT
+            i.facility,
+            COALESCE(v.source_type,'Unknown') AS source_type,
+            COALESCE(v.authorization,'Unknown') AS authorization,
+            COUNT(DISTINCT i.received_material_from) AS unique_vendors,
+            COUNT(DISTINCT i.vendor_location) AS unique_locations,
+            ROUND((SUM(i.accepted_quantity::numeric)/1000)::numeric,3) AS total_mt
+        FROM inward i
+        LEFT JOIN vendor_map v
+            ON LOWER(TRIM(i.received_material_from))=LOWER(TRIM(v.vendor_name))
+            AND LOWER(TRIM(i.vendor_location))=LOWER(TRIM(v.vendor_location))
+        {FACILITY_FILTER}
+        GROUP BY i.facility,source_type,authorization
+        ORDER BY total_mt DESC;""",
 }
 
 SIDEBAR_GROUPS = {
@@ -413,16 +541,25 @@ SIDEBAR_GROUPS = {
     "BWG Analytics": ["bwg: kpi summary","bwg: location analysis"],
     "Outward Analytics": ["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"],
     "Training Analytics": ["training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],
+    "Environmental Impact": ["impact: inward kpi","impact: inward by source type","impact: inward by material category","impact: dispatch kpi","impact: dispatch by destination type","impact: dispatch by material category","impact: recovery rate trend","impact: vendor coverage"],
 }
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
-def inject_filters(sql, facility, date_from, date_to):
-    if facility == "All Facilities":
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE date::date BETWEEN '{date_from}' AND '{date_to}'")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND date::date BETWEEN '{date_from}' AND '{date_to}'")
+def inject_filters(sql, facility, date_from, date_to, facilities=None):
+    # facilities = list of selected facilities (for multi-select)
+    if facility == "All Facilities" and not facilities:
+        date_filter = f"date::date BETWEEN '{date_from}' AND '{date_to}'"
+        sql = sql.replace("{FACILITY_FILTER}", f"WHERE {date_filter}")
+        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND {date_filter}")
+    elif facilities and len(facilities) > 1 and facility == "All Facilities":
+        fac_list = ",".join([f"'{f}'" for f in facilities])
+        date_filter = f"date::date BETWEEN '{date_from}' AND '{date_to}'"
+        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility IN ({fac_list}) AND {date_filter}")
+        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility IN ({fac_list}) AND {date_filter}")
     else:
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility='{facility}' AND date::date BETWEEN '{date_from}' AND '{date_to}'")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility='{facility}' AND date::date BETWEEN '{date_from}' AND '{date_to}'")
+        date_filter = f"date::date BETWEEN '{date_from}' AND '{date_to}'"
+        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility='{facility}' AND {date_filter}")
+        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility='{facility}' AND {date_filter}")
     return sql
 
 def extract_sql(text):
@@ -843,9 +980,19 @@ with st.sidebar:
         selected_facility = st.selectbox("facility", [user_facility], label_visibility="collapsed")
         facility_selected = True
     else:
-        fac_opts = ["— Select Facility —"] + FACILITIES[1:]
-        selected_facility = st.selectbox("facility", fac_opts, index=0, label_visibility="collapsed")
-        facility_selected = selected_facility != "— Select Facility —"
+        all_fac_list = FACILITIES[1:]  # exclude "All Facilities" placeholder
+        select_all = st.checkbox("All Facilities", value=True, key="all_fac_cb")
+        if select_all:
+            selected_facilities = all_fac_list
+            selected_facility = "All Facilities"
+        else:
+            selected_facilities = st.multiselect(
+                "Select facilities", all_fac_list,
+                default=[], key="fac_multiselect",
+                label_visibility="collapsed"
+            )
+            selected_facility = selected_facilities[0] if len(selected_facilities) == 1 else "All Facilities"
+        facility_selected = bool(selected_facilities)
 
     st.divider()
     st.markdown("**Time period**")
@@ -914,6 +1061,12 @@ with st.sidebar:
                 st.session_state["_action"] = {"type":"combined","keys":["training: kpi summary","training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],"label":f"Training Full Analysis | {selected_facility} | {display_time}"}
                 st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
                 st.rerun()
+    with col6:
+        if st.button("Environmental", use_container_width=True, key="all_env"):
+            if facility_selected and time_selected:
+                st.session_state["_action"] = {"type":"combined","keys":["impact: inward kpi","impact: inward by source type","impact: dispatch kpi","impact: dispatch by destination type","impact: recovery rate trend"],"label":f"Environmental Impact | {selected_facility} | {display_time}"}
+                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
+                st.rerun()
     st.divider()
     for group_name, preset_keys in SIDEBAR_GROUPS.items():
         with st.expander(group_name, expanded=False):
@@ -956,7 +1109,7 @@ def run_and_show_combined(keys, label):
     """Run queries, store results in session state, render."""
     results = []
     for key in keys:
-        sql = inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
+        sql = inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to, facilities=selected_facilities if not select_all else None)
         df, error = run_query(sql)
         if error:
             st.error(f"Query failed for {key}: {error}")
@@ -971,7 +1124,7 @@ def run_and_show_combined(keys, label):
 def run_and_show_single(lib_key, is_kpi):
     """Run single query, store result in session state."""
     label = f"{lib_key.title()} | {selected_facility} | {display_time}"
-    sql = inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
+    sql = inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to, facilities=selected_facilities if not select_all else None)
     df, error = run_query(sql)
     if error:
         st.session_state.messages.append({"role": "user", "content": label})
