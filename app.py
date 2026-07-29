@@ -1,21 +1,32 @@
-import streamlit as st
-import pandas as pd
-import re
-import os
-import io
+"""Waste Ops MIS — main app.
+Architecture: this file only orchestrates. Business logic lives in:
+  db.py        — Supabase connection, query execution, SQL safety guardrail
+  llm.py       — Groq client, prompt construction, schema/domain context
+  queries.py   — the preset query library and facility/analysis constants
+  results.py   — table formatting, KPI cards, auto-charting
+  nlp_dates.py — relative date phrase parsing for free-text questions
+  reports.py   — one-click PDF report generation
+  theme.py     — design tokens, global CSS, login page, top-right avatar
+"""
 import calendar
-import json
-from datetime import date
-import plotly.express as px
-import plotly.graph_objects as go
-from sqlalchemy import create_engine, text
-from groq import Groq
+from datetime import date, timedelta
+
 import bcrypt
+import pandas as pd
+import streamlit as st
 
-# ── PAGE CONFIG ───────────────────────────────────────────────────────────────
+import theme
+import db
+import llm
+import results
+import nlp_dates
+import reports
+from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_GROUPS, ANALYSIS_TYPE_COMBINED
+
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
+theme.inject_global_css()
 
-# ── AUTH ──────────────────────────────────────────────────────────────────────
+# ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
     users = st.secrets.get("credentials", {}).get("usernames", {})
     if username not in users:
@@ -23,1332 +34,426 @@ def check_password(username, password):
     stored_hash = users[username].get("password", "")
     return bcrypt.checkpw(password.encode(), stored_hash.encode())
 
+
 def get_user_info(username):
     return dict(st.secrets["credentials"]["usernames"][username])
+
 
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.username = None
 
 if not st.session_state.authenticated:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("## Waste Ops MIS")
-        st.markdown("---")
-        username_input = st.text_input("Username")
-        password_input = st.text_input("Password", type="password")
-        if st.button("Login", use_container_width=True):
-            if check_password(username_input, password_input):
-                st.session_state.authenticated = True
-                st.session_state.username = username_input
-                st.rerun()
-            else:
-                st.error("Incorrect username or password")
+    if theme.render_login_page(check_password):
+        st.rerun()
     st.stop()
 
-# Get user info
 username = st.session_state.username
 user_info = get_user_info(username)
 user_role = user_info["role"]
 user_facility = user_info["facility"]
 user_name = user_info["name"]
 
-# ── DB CONNECTION ─────────────────────────────────────────────────────────────
 SUPABASE_URL = st.secrets["supabase"]["url"]
 GROQ_API_KEY = st.secrets["groq"]["api_key"]
-groq_client = Groq(api_key=GROQ_API_KEY)
-GROQ_MODEL = "llama-3.3-70b-versatile"
+groq_client = llm.get_groq_client(GROQ_API_KEY)
 
-@st.cache_resource
-def get_engine():
-    return create_engine(SUPABASE_URL, pool_pre_ping=True)
 
-def sanitize_sql(sql):
-    """Auto-cast text columns inside SUM/AVG/ROUND to ::numeric to prevent sum(text) errors."""
-    import re as _re
-    # Known text columns in our schema that need casting
-    text_cols = [
-        'value_of_accepted_material', 'net_procurement_cost', 'transportation_cost',
-        'loading_cost', 'additional_cost', 'net_material_sales_cost',
-        'total_incentive_cost', 'rate', 'amount', 'bill_amount',
-        'value_of_material', 'incentive'
-    ]
-    for col in text_cols:
-        # SUM(col) -> SUM(col::numeric)
-        sql = _re.sub(
-            rf'SUM\(\s*{col}\s*\)',
-            f'SUM({col}::numeric)',
-            sql, flags=_re.IGNORECASE
-        )
-        # AVG(col) -> AVG(col::numeric)
-        sql = _re.sub(
-            rf'AVG\(\s*{col}\s*\)',
-            f'AVG({col}::numeric)',
-            sql, flags=_re.IGNORECASE
-        )
-        # COALESCE(col, 0) -> COALESCE(col::numeric, 0)
-        sql = _re.sub(
-            rf'COALESCE\(\s*{col}\s*,',
-            f'COALESCE({col}::numeric,',
-            sql, flags=_re.IGNORECASE
-        )
-    return sql
+def _logout():
+    st.session_state.authenticated = False
+    st.session_state.username = None
+    st.rerun()
 
-def run_query(sql):
-    try:
-        sql = sanitize_sql(sql)
-        engine = get_engine()
-        with engine.connect() as conn:
-            df = pd.read_sql_query(text(sql), conn)
-        return df, None
-    except Exception as e:
-        return None, str(e)
 
-# ── CONSTANTS ─────────────────────────────────────────────────────────────────
-FACILITIES = ["All Facilities", "Hebbagodi", "MRF", "Muguluru", "Jigani", "GPR",
-              "Anekal", "Marsur", "Mayasandra", "Bommasandra", "Attibele"]
-MONTHS_FULL = ["January","February","March","April","May","June",
-               "July","August","September","October","November","December"]
-MONTH_NUM = {m: str(i+1).zfill(2) for i, m in enumerate(MONTHS_FULL)}
-
-# ── CSS ───────────────────────────────────────────────────────────────────────
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-html,body,[class*="css"]{font-family:'Inter',sans-serif!important;}
-#MainMenu,footer,header{visibility:hidden;}
-.block-container{padding:1rem 1.5rem!important;max-width:100%!important;}
-section[data-testid="stSidebar"]{min-width:320px!important;max-width:320px!important;}
-
-/* Light mode sidebar */
-[data-theme="light"] section[data-testid="stSidebar"],
-.light section[data-testid="stSidebar"]{background-color:#F7F3EE!important;border-right:1px solid #E8E0D5!important;}
-
-/* KPI cards - auto dark/light */
-.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:1.25rem;}
-.kpi-card{border-radius:10px;padding:0.875rem 1rem;}
-.kpi-label{font-size:10px;color:#9B9490;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;}
-
-/* Light mode */
-.kpi-sage{background:#E8F0E8;}.kpi-lavender{background:#F0EDF8;}
-.kpi-peach{background:#FDF0E8;}.kpi-amber{background:#FDF6E8;}.kpi-rose{background:#FDF0F2;}
-.kpi-value{font-size:18px;font-weight:600;color:var(--text-color,#2C2A28);}
-
-/* Dark mode overrides */
-@media(prefers-color-scheme:dark){
-  .kpi-sage{background:#1A2E1A!important;}.kpi-lavender{background:#1E1A2E!important;}
-  .kpi-peach{background:#2E1E0A!important;}.kpi-amber{background:#2E260A!important;}.kpi-rose{background:#2E1A1C!important;}
-  .kpi-value{color:#E8E0D5!important;}
-  section[data-testid="stSidebar"]{background-color:#1A1A1A!important;border-right:1px solid #333!important;}
-}
-</style>
-""", unsafe_allow_html=True)
-
-# ── QUERY LIBRARY ─────────────────────────────────────────────────────────────
-QUERY_LIBRARY = {
-    "inward: kpi summary": """
-        SELECT SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            SUM(rejected_quantity) AS total_rejected_kg,
-            ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(received_quantity),0))::numeric,2) AS rejection_pct,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END) AS total_non_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS non_valuables_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS total_material_value,
-            ROUND((SUM(COALESCE(transportation_cost::numeric,0)))::numeric,2) AS total_transportation_cost,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS total_net_procurement_cost
-        FROM inward {FACILITY_FILTER};""",
-
-    "inward: vendor analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, received_material_from AS vendor,
-            SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(received_quantity),0))::numeric,2) AS rejection_pct,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_value,
-            ROUND((SUM(COALESCE(transportation_cost::numeric,0)))::numeric,2) AS transportation_cost,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward {FACILITY_FILTER}
-        GROUP BY month,facility,vendor ORDER BY month DESC,total_received_kg DESC;""",
-
-    "inward: vendor location analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, vendor_location AS location,
-            SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(received_quantity),0))::numeric,2) AS rejection_pct,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_value,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward {FACILITY_FILTER}
-        GROUP BY month,facility,location ORDER BY month DESC,total_received_kg DESC;""",
-
-    "production: kpi summary": """
-        SELECT
-            ROUND((SUM(CASE WHEN LOWER(process_equipment) LIKE '%sort%' THEN material_quantity ELSE 0 END))::numeric,2) AS total_sorted_kg,
-            ROUND((SUM(CASE WHEN LOWER(process_equipment) LIKE '%bag%' THEN material_quantity ELSE 0 END))::numeric,2) AS total_bagged_kg,
-            ROUND((SUM(CASE WHEN LOWER(process_equipment) LIKE '%bail%' OR LOWER(process_equipment) LIKE '%bale%' THEN material_quantity ELSE 0 END))::numeric,2) AS total_bailed_kg,
-            ROUND((SUM(material_quantity))::numeric,2) AS total_processed_kg,
-            COUNT(DISTINCT production_code) AS total_runs,
-            COUNT(DISTINCT date::date) AS days_operated
-        FROM production {FACILITY_FILTER};""",
-
-    "production: equipment analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, process_equipment,
-            COUNT(DISTINCT production_code) AS total_runs,
-            ROUND((SUM(material_quantity))::numeric,2) AS total_qty_processed_kg,
-            ROUND((AVG(no_of_staff_present))::numeric,1) AS avg_staff,
-            COUNT(DISTINCT date::date) AS days_operated,
-            ROUND((SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0))::numeric,2) AS efficiency_per_day,
-            ROUND((SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0))::numeric,2) AS efficiency_per_hour
-        FROM production {FACILITY_FILTER}
-        GROUP BY month,facility,process_equipment ORDER BY month DESC,total_qty_processed_kg DESC;""",
-
-    "production: shift analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, shift,
-            COUNT(DISTINCT production_code) AS total_runs,
-            ROUND((SUM(material_quantity))::numeric,2) AS total_qty_processed_kg,
-            ROUND((AVG(no_of_staff_present))::numeric,1) AS avg_staff,
-            ROUND((SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0))::numeric,2) AS efficiency_per_day,
-            ROUND((SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0))::numeric,2) AS efficiency_per_hour
-        FROM production {FACILITY_FILTER}
-        GROUP BY month,facility,shift ORDER BY month DESC,efficiency_per_day DESC;""",
-
-    "production: equipment x shift analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, process_equipment, shift,
-            COUNT(DISTINCT production_code) AS total_runs,
-            ROUND((SUM(material_quantity))::numeric,2) AS total_qty_processed_kg,
-            ROUND((SUM(material_quantity)/NULLIF(COUNT(DISTINCT date::date),0))::numeric,2) AS efficiency_per_day,
-            ROUND((SUM(material_quantity)/NULLIF(SUM(time_taken_in_hrs),0))::numeric,2) AS efficiency_per_hour
-        FROM production {FACILITY_FILTER}
-        GROUP BY month,facility,process_equipment,shift ORDER BY month DESC,process_equipment;""",
-
-    "transport: vendor and vehicle analysis": """
-        SELECT facility, transport_vendor, vehicle_number,
-            SUM(total_trips) AS total_trips, SUM(inward_trips) AS inward_trips, SUM(outward_trips) AS outward_trips,
-            ROUND((SUM(total_material_kg))::numeric,2) AS total_material_kg,
-            SUM(paid_trips) AS paid_trips,
-            ROUND((SUM(total_transport_cost))::numeric,2) AS total_transport_cost,
-            ROUND((SUM(total_transport_cost)/NULLIF(SUM(material_at_cost),0))::numeric,2) AS rate_per_kg
-        FROM (
-            SELECT facility, vehicle_vendor_name AS transport_vendor, vehicle_number,
-                COUNT(DISTINCT inward_code) AS total_trips, COUNT(DISTINCT inward_code) AS inward_trips, 0 AS outward_trips,
-                SUM(accepted_quantity) AS total_material_kg,
-                COUNT(CASE WHEN COALESCE(transportation_cost,0)+COALESCE(loading_cost,0)+COALESCE(additional_cost,0)>0 THEN 1 END) AS paid_trips,
-                SUM(COALESCE(transportation_cost,0)+COALESCE(loading_cost,0)+COALESCE(additional_cost,0)) AS total_transport_cost,
-                SUM(CASE WHEN COALESCE(transportation_cost,0)+COALESCE(loading_cost,0)+COALESCE(additional_cost,0)>0 THEN accepted_quantity ELSE 0 END) AS material_at_cost
-            FROM inward WHERE vehicle_vendor_name IS NOT NULL {AND_FACILITY_FILTER}
-            GROUP BY facility,transport_vendor,vehicle_number
-            UNION ALL
-            SELECT facility, transport_vendor, vehicle_number,
-                COUNT(DISTINCT outward_code) AS total_trips, 0 AS inward_trips, COUNT(DISTINCT outward_code) AS outward_trips,
-                SUM(accepted_quantity) AS total_material_kg,
-                COUNT(CASE WHEN COALESCE(transportation_cost,0)+COALESCE(loading_cost,0)+COALESCE(additional_transport_cost,0)>0 THEN 1 END) AS paid_trips,
-                SUM(COALESCE(transportation_cost,0)+COALESCE(loading_cost,0)+COALESCE(additional_transport_cost,0)) AS total_transport_cost,
-                SUM(CASE WHEN COALESCE(transportation_cost,0)+COALESCE(loading_cost,0)+COALESCE(additional_transport_cost,0)>0 THEN accepted_quantity ELSE 0 END) AS material_at_cost
-            FROM outward WHERE transport_vendor IS NOT NULL {AND_FACILITY_FILTER}
-            GROUP BY facility,transport_vendor,vehicle_number
-        ) combined
-        WHERE transport_vendor IS NOT NULL AND transport_vendor!=''
-        GROUP BY facility,transport_vendor,vehicle_number ORDER BY transport_vendor,total_trips DESC;""",
-
-    "ulb: kpi summary": """
-        SELECT SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END) AS total_non_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS non_valuables_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS total_material_value,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS total_net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER};""",
-
-    "ulb: ward location analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, vendor_location AS ward_location,
-            SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END) AS total_non_valuables_kg,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_value,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER}
-        GROUP BY month,facility,ward_location ORDER BY month DESC,total_received_kg DESC;""",
-
-    "ulb: driver analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, UPPER(TRIM(driver_name)) AS driver,
-            COUNT(DISTINCT inward_code) AS total_trips,
-            SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER}
-        GROUP BY month,facility,driver ORDER BY month DESC,total_trips DESC;""",
-
-    "bwg: kpi summary": """
-        SELECT SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS total_material_value,
-            ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS total_net_procurement_cost
-        FROM inward WHERE source='Bulk waste generator' {AND_FACILITY_FILTER};""",
-
-    "bwg: location analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, vendor_location AS location, received_material_from AS vendor,
-            SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
-            ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct
-        FROM inward WHERE source='Bulk waste generator' {AND_FACILITY_FILTER}
-        GROUP BY month,facility,location,vendor ORDER BY month DESC,total_received_kg DESC;""",
-
-    "outward: kpi summary": """
-        SELECT SUM(dispatched_quantity) AS total_dispatched_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(dispatched_quantity),0))::numeric,2) AS rejection_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_revenue,
-            ROUND((SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS total_incentive,
-            ROUND((SUM(value_of_accepted_material::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS total_revenue,
-            ROUND((SUM(net_material_sales_cost::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS net_revenue
-        FROM outward {FACILITY_FILTER};""",
-
-    "outward: customer analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, customer,
-            SUM(dispatched_quantity) AS total_dispatched_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            ROUND((100.0*SUM(rejected_quantity)/NULLIF(SUM(dispatched_quantity),0))::numeric,2) AS rejection_pct,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_revenue,
-            ROUND((SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS total_incentive,
-            ROUND((SUM(value_of_accepted_material::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS total_revenue,
-            ROUND((SUM(COALESCE(transportation_cost::numeric,0)))::numeric,2) AS transportation_cost,
-            ROUND((SUM(net_material_sales_cost::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS net_revenue
-        FROM outward {FACILITY_FILTER}
-        GROUP BY month,facility,customer ORDER BY month DESC,net_revenue DESC;""",
-
-    "outward: customer destination analysis": """
-        SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, customer, destination,
-            SUM(dispatched_quantity) AS total_dispatched_kg, SUM(accepted_quantity) AS total_accepted_kg,
-            ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_revenue,
-            ROUND((SUM(value_of_accepted_material::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS total_revenue,
-            ROUND((SUM(net_material_sales_cost::numeric)+SUM(COALESCE(total_incentive_cost::numeric,0)))::numeric,2) AS net_revenue
-        FROM outward {FACILITY_FILTER}
-        GROUP BY month,facility,customer,destination ORDER BY month DESC,customer,net_revenue DESC;""",
-
-    # ── TRAINING ──────────────────────────────────────────────────────────────
-    "training: kpi summary": """
-        SELECT
-            COUNT(DISTINCT training_code) AS total_trainings,
-            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_training_hours,
-            SUM(attendee_count) AS total_people_trained,
-            ROUND(AVG(duration_mins)::numeric, 0) AS avg_duration_mins
-        FROM training
-        {FACILITY_FILTER};""",
-
-    "training: topic analysis": """
-        SELECT
-            TO_CHAR(date::date, 'YYYY-MM') AS month,
-            facility,
-            topic,
-            category,
-            COUNT(*) AS sessions,
-            SUM(attendee_count) AS total_attendees,
-            ROUND(AVG(duration_mins)::numeric, 0) AS avg_duration_mins,
-            SUM(duration_mins) AS total_duration_mins
-        FROM training
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date, 'YYYY-MM'), facility, topic, category
-        ORDER BY month DESC, sessions DESC;""",
-
-    "training: trainer analysis": """
-        SELECT
-            facility,
-            trainer,
-            COUNT(DISTINCT training_code) AS sessions_conducted,
-            SUM(attendee_count) AS total_people_trained,
-            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_training_hours,
-            ROUND(AVG(duration_mins)::numeric, 0) AS avg_duration_mins
-        FROM training
-        {FACILITY_FILTER}
-        GROUP BY facility, trainer
-        ORDER BY sessions_conducted DESC;""",
-
-    "training: category analysis": """
-        SELECT
-            TO_CHAR(date::date, 'YYYY-MM') AS month,
-            facility,
-            category,
-            COUNT(DISTINCT training_code) AS sessions,
-            SUM(attendee_count) AS total_attendees,
-            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours
-        FROM training
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date, 'YYYY-MM'), facility, category
-        ORDER BY month DESC, sessions DESC;""",
-
-    "training: role based attendance": """
-        SELECT
-            facility,
-            attendee_role AS role,
-            COUNT(DISTINCT training_code) AS sessions_attended,
-            COUNT(DISTINCT attendee_name) AS unique_people,
-            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours_received
-        FROM training_attendees
-        {FACILITY_FILTER}
-        GROUP BY facility, attendee_role
-        ORDER BY sessions_attended DESC;""",
-
-    "training: repeat attendees": """
-        SELECT
-            facility,
-            attendee_name AS name,
-            attendee_role AS role,
-            COUNT(DISTINCT training_code) AS sessions_attended,
-            ROUND((SUM(duration_mins)::numeric / 60), 2) AS total_hours_received,
-            STRING_AGG(DISTINCT category, ', ') AS categories_covered
-        FROM training_attendees
-        {FACILITY_FILTER}
-        GROUP BY facility, attendee_name, attendee_role
-        HAVING COUNT(DISTINCT training_code) > 1
-        ORDER BY sessions_attended DESC;""",
-
-    # ── ENVIRONMENTAL IMPACT ──────────────────────────────────────────────────
-    "impact: inward kpi": """
-        SELECT
-            COUNT(DISTINCT received_material_from) AS total_vendors,
-            ROUND((SUM(accepted_quantity::numeric)/1000)::numeric,3) AS total_inward_mt,
-            ROUND((SUM(accepted_quantity::numeric)/1000/26)::numeric,3) AS avg_tpd,
-            COUNT(DISTINCT source_type) AS source_types
-        FROM inward
-        {FACILITY_FILTER};""",
-
-    "impact: inward by source type": """
-        SELECT
-            TO_CHAR(date::date,'YYYY-MM') AS month,
-            facility,
-            COALESCE(source_type,'Unknown') AS source_type,
-            COUNT(DISTINCT received_material_from) AS unique_vendors,
-            ROUND((SUM(accepted_quantity::numeric)/1000)::numeric,3) AS total_mt,
-            ROUND((SUM(accepted_quantity::numeric)/1000/26)::numeric,3) AS avg_tpd
-        FROM inward
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date,'YYYY-MM'),facility,COALESCE(source_type,'Unknown')
-        ORDER BY month DESC,total_mt DESC;""",
-
-    "impact: inward by material category": """
-        SELECT
-            TO_CHAR(date::date,'YYYY-MM') AS month,
-            facility,
-            COALESCE(inward_material_category,'Unknown') AS material_category,
-            ROUND((SUM(accepted_quantity::numeric)/1000)::numeric,3) AS total_mt,
-            ROUND((SUM(accepted_quantity::numeric)/1000*100/
-                NULLIF(SUM(SUM(accepted_quantity::numeric)) OVER(PARTITION BY TO_CHAR(date::date,'YYYY-MM'),facility),0))::numeric,2) AS pct_of_total
-        FROM inward
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date,'YYYY-MM'),facility,COALESCE(inward_material_category,'Unknown')
-        ORDER BY month DESC,total_mt DESC;""",
-
-    "impact: dispatch kpi": """
-        SELECT
-            COUNT(DISTINCT customer) AS total_customers,
-            ROUND((SUM(dispatched_quantity::numeric)/1000)::numeric,3) AS total_dispatched_mt,
-            ROUND((SUM(rejected_quantity::numeric)/1000)::numeric,3) AS total_rejected_mt,
-            ROUND(((SUM(dispatched_quantity::numeric)-SUM(rejected_quantity::numeric))/1000)::numeric,3) AS net_dispatched_mt,
-            ROUND((SUM(CASE WHEN COALESCE(vendor_type,'')='Recycler' THEN dispatched_quantity::numeric ELSE 0 END)/1000)::numeric,3) AS recycled_mt,
-            ROUND((SUM(CASE WHEN COALESCE(vendor_type,'')='Co-Processing' THEN dispatched_quantity::numeric ELSE 0 END)/1000)::numeric,3) AS co_processed_mt,
-            ROUND(((SUM(dispatched_quantity::numeric)-SUM(rejected_quantity::numeric))/
-                NULLIF(SUM(dispatched_quantity::numeric),0)*100)::numeric,2) AS recovery_rate_pct
-        FROM outward
-        {FACILITY_FILTER};""",
-
-    "impact: dispatch by destination type": """
-        SELECT
-            TO_CHAR(date::date,'YYYY-MM') AS month,
-            facility,
-            customer,
-            destination,
-            COALESCE(vendor_type,'Unknown') AS destination_type,
-            COALESCE(authorisation,'Unknown') AS authorization,
-            ROUND((SUM(dispatched_quantity::numeric)/1000)::numeric,3) AS total_mt,
-            ROUND((SUM(rejected_quantity::numeric)/1000)::numeric,3) AS rejected_mt
-        FROM outward
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date,'YYYY-MM'),facility,customer,destination,COALESCE(vendor_type,'Unknown'),COALESCE(authorisation,'Unknown')
-        ORDER BY month DESC,total_mt DESC;""",
-
-    "impact: dispatch by material category": """
-        SELECT
-            TO_CHAR(date::date,'YYYY-MM') AS month,
-            facility,
-            COALESCE(outward_material_category,'Unknown') AS material_category,
-            COALESCE(vendor_type,'Unknown') AS destination_type,
-            ROUND((SUM(dispatched_quantity::numeric)/1000)::numeric,3) AS total_mt
-        FROM outward
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date,'YYYY-MM'),facility,COALESCE(outward_material_category,'Unknown'),COALESCE(vendor_type,'Unknown')
-        ORDER BY month DESC,total_mt DESC;""",
-
-    "impact: recovery rate trend": """
-        SELECT
-            TO_CHAR(date::date,'YYYY-MM') AS month,
-            facility,
-            ROUND((SUM(dispatched_quantity::numeric)/1000)::numeric,3) AS total_dispatched_mt,
-            ROUND((SUM(rejected_quantity::numeric)/1000)::numeric,3) AS total_rejected_mt,
-            ROUND(((SUM(dispatched_quantity::numeric)-SUM(rejected_quantity::numeric))/1000)::numeric,3) AS net_dispatched_mt,
-            ROUND(((SUM(dispatched_quantity::numeric)-SUM(rejected_quantity::numeric))/
-                NULLIF(SUM(dispatched_quantity::numeric),0)*100)::numeric,2) AS recovery_rate_pct
-        FROM outward
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date,'YYYY-MM'),facility
-        ORDER BY month DESC;""",
-
-    "impact: vendor coverage": """
-        SELECT
-            facility,
-            COALESCE(source_type,'Unknown') AS source_type,
-            COALESCE(authorisation,'Unknown') AS authorization,
-            COUNT(DISTINCT received_material_from) AS unique_vendors,
-            COUNT(DISTINCT vendor_location) AS unique_locations,
-            ROUND((SUM(accepted_quantity::numeric)/1000)::numeric,3) AS total_mt
-        FROM inward
-        {FACILITY_FILTER}
-        GROUP BY facility,COALESCE(source_type,'Unknown'),COALESCE(authorisation,'Unknown')
-        ORDER BY total_mt DESC;""",
-}
-
-SIDEBAR_GROUPS = {
-    "Inward Analytics": ["inward: kpi summary","inward: vendor analysis","inward: vendor location analysis"],
-    "Production Analytics": ["production: kpi summary","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"],
-    "Transport Analytics": ["transport: vendor and vehicle analysis"],
-    "ULB Analytics": ["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"],
-    "BWG Analytics": ["bwg: kpi summary","bwg: location analysis"],
-    "Outward Analytics": ["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"],
-    "Training Analytics": ["training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],
-    "Environmental Impact": ["impact: inward kpi","impact: inward by source type","impact: inward by material category","impact: dispatch kpi","impact: dispatch by destination type","impact: dispatch by material category","impact: recovery rate trend","impact: vendor coverage"],
-}
-
-# ── HELPERS ───────────────────────────────────────────────────────────────────
-def inject_filters(sql, facility, date_from, date_to):
-    if facility == "All Facilities":
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE date::date BETWEEN '{date_from}' AND '{date_to}'")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND date::date BETWEEN '{date_from}' AND '{date_to}'")
-    else:
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility='{facility}' AND date::date BETWEEN '{date_from}' AND '{date_to}'")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility='{facility}' AND date::date BETWEEN '{date_from}' AND '{date_to}'")
-    return sql
-
-def extract_sql(text):
-    match = re.search(r'```sql\s*(.*?)\s*```', text, re.DOTALL)
-    if match: return match.group(1).strip()
-    match2 = re.search(r'SELECT.*?;', text, re.DOTALL | re.IGNORECASE)
-    if match2: return match2.group(0).strip()
-    return None
-
-def add_summary_row(df):
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    if not numeric_cols: return df
-    sum_row = {col: df[col].sum() if col in numeric_cols else ("TOTAL" if i==0 else "") for i,col in enumerate(df.columns)}
-    avg_row = {col: round(df[col].mean(),2) if col in numeric_cols else ("AVG" if i==0 else "") for i,col in enumerate(df.columns)}
-    return pd.concat([df, pd.DataFrame([sum_row, avg_row])], ignore_index=True)
-
-def df_to_csv_bytes(df): return df.to_csv(index=False).encode("utf-8")
-
-def df_to_excel_bytes(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        add_summary_row(df).to_excel(writer, sheet_name="Data", index=False)
-    return output.getvalue()
-
-def format_dataframe(df):
-    MONEY_SUFFIXES = ['_cost','_revenue','_paid','_amount','_value','_incentive','_procurement']
-    PCT_SUFFIXES = ['_pct','_percent']
-    COST_COLS = ['net_procurement_cost','net_cost_per_kg','net_material_sales_cost','net_revenue','net_revenue_per_kg']
-    for col in df.columns:
-        col_lower = col.lower()
-        if any(col_lower.endswith(s) for s in PCT_SUFFIXES):
-            df[col] = df[col].apply(lambda x: f'{x:.2f}%' if isinstance(x,(int,float)) and str(x) not in ['TOTAL','AVG',''] else x)
-        elif col_lower in COST_COLS:
-            def fmt_cost(x):
-                if not isinstance(x,(int,float)) or str(x) in ['TOTAL','AVG','']: return x
-                if x < 0: return f'₹{abs(x):,.2f} (cost)'
-                return f'₹{x:,.2f}'
-            df[col] = df[col].apply(fmt_cost)
-        elif any(col_lower.endswith(s) for s in MONEY_SUFFIXES):
-            df[col] = df[col].apply(lambda x: f'₹{x:,.2f}' if isinstance(x,(int,float)) and str(x) not in ['TOTAL','AVG',''] else x)
-    return df
-
-def render_kpi_cards(df):
-    if df is None or len(df)==0: return
-    colors = ["kpi-sage","kpi-lavender","kpi-peach","kpi-amber","kpi-rose"]
-    MONEY_SUFFIXES = ['_cost','_revenue','_paid','_amount','_value','_incentive','_procurement']
-    PCT_SUFFIXES = ['_pct','_percent']
-    KG_SUFFIXES = ['_kg','_quantity','_runs','_days','_trips']
-    cards_html = '<div class="kpi-grid">'
-    for i, col in enumerate(df.columns[:10]):
-        val = df[col].iloc[0]
-        color = colors[i % len(colors)]
-        label = col.replace("_"," ").title()
-        col_lower = col.lower()
-        if isinstance(val,(int,float)) and str(val) not in ['nan']:
-            if any(col_lower.endswith(s) for s in PCT_SUFFIXES):
-                display = f"{val:,.2f}%"
-            elif any(col_lower.endswith(s) for s in MONEY_SUFFIXES) and not any(col_lower.endswith(s) for s in KG_SUFFIXES):
-                display = f"₹{val:,.2f}"
-            elif isinstance(val,float):
-                display = f"{val:,.2f}"
-            else:
-                display = f"{int(val):,}"
-        else:
-            display = str(val)
-        cards_html += f'<div class="kpi-card {color}"><div class="kpi-label">{label}</div><div class="kpi-value">{display}</div></div>'
-    cards_html += '</div>'
-    st.markdown(cards_html, unsafe_allow_html=True)
-
-def get_db_context(facility="All Facilities"):
-    ctx_path = os.path.join(os.path.dirname(__file__), "db_context.json")
-    try:
-        ctx = json.load(open(ctx_path))
-    except Exception:
-        return ""
-    lines = []
-
-    # Always include global context
-    g = ctx.get("_global", {})
-    if g:
-        lines.append("=== TERMINOLOGY ALIASES (treat these as the same thing) ===")
-        for col, aliases in g.get("terminology_aliases", {}).items():
-            lines.append(f"  '{col}' = also called: {', '.join(aliases)}")
-
-        lines.append("\n=== MATERIAL NAME ALIASES ===")
-        for mat, aliases in g.get("material_aliases", {}).items():
-            lines.append(f"  '{mat}' = also called: {', '.join(aliases)}")
-
-        lines.append("\n=== SQL RULES (always follow these) ===")
-        for rule in g.get("sql_rules", []):
-            lines.append(f"  - {rule}")
-
-    # Facility-specific context
-    facilities = [k for k in ctx.keys() if not k.startswith("_")] if facility == "All Facilities" else [facility]
-    for f in facilities:
-        if f not in ctx: continue
-        d = ctx[f]
-        lines.append(f"\n=== {f.upper()} FACILITY ===")
-        if d.get("description"):
-            lines.append(f"  About: {d['description']}")
-        if d.get("key_vendors"):
-            lines.append(f"  Key vendors [column: received_material_from]: {', '.join(d['key_vendors'])}")
-        if d.get("key_ward_locations"):
-            lines.append(f"  Ward locations [column: vendor_location]: {', '.join(d['key_ward_locations'][:10])}")
-        if d.get("key_materials"):
-            lines.append(f"  Key materials [column: material]: {', '.join(d['key_materials'])}")
-        if d.get("notes"):
-            lines.append(f"  Notes: {d['notes']}")
-
-    return "\n".join(lines)
-
-def get_conversation_context():
-    hist = st.session_state.get("conversation_history",[])
-    if not hist: return ""
-    lines = ["PREVIOUS QUESTIONS IN THIS SESSION:"]
-    for i, h in enumerate(hist[-5:]):
-        lines.append(f"  Q{i+1}: {h['question']}")
-        if h.get("clarification"): lines.append(f"  → Chose: {h['clarification']}")
-        if h.get("sql"): lines.append(f"  → SQL: {h['sql'][:120]}...")
-    return chr(10).join(lines)
-
-SCHEMA_CONTEXT = """
-TABLE: inward — waste received at facility
-COLUMNS: inward_code, date, facility, received_material_from (vendor), vendor_location (ward),
-source (ULB/Bulk waste generator/Aggregator/DWCC/SHGc/Waste Picker), driver_name,
-vehicle_vendor_name, vehicle_number, material, received_quantity, accepted_quantity,
-rejected_quantity, value_of_accepted_material, net_procurement_cost,
-transportation_cost, loading_cost, additional_cost
-NOTE: NO destination column. Use facility for facility name.
-
-TABLE: production — processing runs
-COLUMNS: production_code, date, facility, shift (Day/Night/General),
-process_equipment, material_quantity (output kg), no_of_staff_present, time_taken_in_hrs
-
-TABLE: outward — material dispatched to customers
-COLUMNS: outward_code, date, facility, customer, destination, material,
-dispatched_quantity, accepted_quantity, rejected_quantity, value_of_accepted_material,
-net_material_sales_cost, total_incentive_cost, transportation_cost, loading_cost, additional_transport_cost
-
-TABLE: expense — date, facility, category, bill_amount_in_rs
-TABLE: revenue — date, facility, category, bill_amount_in_rs
-NOTE: Use PostgreSQL syntax. Use TO_CHAR(date::date,'YYYY-MM') for monthly grouping instead of strftime.
-"""
-
-def get_clarifications(question, facility, date_from, date_to):
-    db_context = get_db_context(facility)
-    conv_context = get_conversation_context()
-    prompt = f"""You are a waste operations data analyst assistant.
-{conv_context}
-User question: "{question}"
-Facility: {facility} | Date range: {date_from} to {date_to}
-{db_context}
-
-Generate 4-5 SPECIFIC clarification options that directly answer what the user asked.
-Rules:
-- Each option must be a DIFFERENT angle on the SAME question (not generic options)
-- Use actual column names, metric names, or entity names from the data context
-- Options should be actionable SQL queries (e.g. "By vendor", "Monthly trend", "Top 10 by weight")
-- If question mentions a specific topic (training, inward, outward), ALL options must relate to that topic
-- Do NOT suggest unrelated topics
-Return ONLY a JSON array: [{{"label": "short label", "description": "what this shows"}}]
-No other text, no markdown, no explanation."""
-    try:
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role":"user","content":prompt}],
-            temperature=0.2
-        )
-        import json as json_lib
-        text = response.choices[0].message.content.strip()
-        start = text.find('['); end = text.rfind(']')+1
-        if start!=-1 and end>start:
-            return json_lib.loads(text[start:end])
-        return []
-    except Exception as e:
-        st.error(f"⚠️ Groq AI is unavailable: {e}. Please check your API key or try again shortly.")
-        return []
-
-def get_explorations(question, df_columns, facility, date_from, date_to):
-    db_context = get_db_context(facility)
-    conv_context = get_conversation_context()
-    cols = ", ".join(list(df_columns)[:8])
-    prompt = f"""Waste management analyst.
-{conv_context}
-User asked: "{question}", result columns: {cols}
-Facility: {facility}
-{db_context}
-
-Generate 4-5 specific follow-up exploration options based on this result.
-Return ONLY a JSON array with "label" and "description" keys. No other text."""
-    try:
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role":"user","content":prompt}],
-            temperature=0.3
-        )
-        import json as json_lib
-        text = response.choices[0].message.content.strip()
-        start = text.find('['); end = text.rfind(']')+1
-        if start!=-1 and end>start:
-            return json_lib.loads(text[start:end])
-        return []
-    except Exception as e:
-        st.error(f"⚠️ Groq AI is unavailable: {e}. Exploration suggestions could not be generated.")
-        return []
-
-def ask_groq_sql(question, clarification, facility, date_from, date_to, original_sql=None, original_question=None):
-    if facility!="All Facilities":
-        fclause = f"WHERE facility='{facility}' AND date>='{date_from}' AND date<='{date_to}'"
-        fnote = f"Filter by facility='{facility}'"
-    else:
-        fclause = f"WHERE date>='{date_from}' AND date<='{date_to}'"
-        fnote = "No facility filter. Include facility in SELECT."
-    db_context = get_db_context(facility)
-    conv_context = get_conversation_context()
-    context = f"\nPrevious SQL: {original_sql[:200]}\n" if original_sql else ""
-    prompt = f"""PostgreSQL SQL expert for waste management database.
-{conv_context}
-{context}
-Question: {question}
-User wants: {clarification}
-Filter: {fclause}
-{fnote}
-
-RULES:
-1. Return ONLY SQL in ```sql ``` blocks
-2. PostgreSQL syntax. Semicolon. NULLIF. LIMIT 500.
-3. Use TO_CHAR(date::date,'YYYY-MM') AS month for monthly grouping
-4. inward vendor=received_material_from (LIKE '%name%'). NO destination in inward.
-5. production output=material_quantity. outward customer=customer column.
-6. Use LIKE '%name%' for partial name matching
-
-{db_context}
-{SCHEMA_CONTEXT}
-
-Write SQL for: {question} — showing {clarification}"""
-    try:
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role":"system","content":"Return ONLY SQL in ```sql ``` blocks."},
-                      {"role":"user","content":prompt}],
-            temperature=0.1
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error: {e}"
-
-def ask_llm(question, facility, date_from, date_to):
-    if facility!="All Facilities":
-        fclause = f"WHERE facility='{facility}' AND date>='{date_from}' AND date<='{date_to}'"
-        fnote = f"Filter by facility='{facility}'"
-    else:
-        fclause = f"WHERE date>='{date_from}' AND date<='{date_to}'"
-        fnote = "No facility filter."
-    db_context = get_db_context(facility)
-    conv_context = get_conversation_context()
-    prompt = f"""PostgreSQL SQL expert. Return ONLY SQL in ```sql ``` blocks.
-{conv_context}
-Filter: {fclause}
-{fnote}
-Rules: PostgreSQL. NULLIF. LIMIT 500. TO_CHAR(date::date,'YYYY-MM') for months.
-inward vendor=received_material_from (LIKE). production=material_quantity. inward NO destination.
-{db_context}
-{SCHEMA_CONTEXT}
-Question: {question}"""
-    try:
-        response = groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[{"role":"system","content":"Return ONLY SQL in ```sql ``` blocks."},
-                      {"role":"user","content":prompt}],
-            temperature=0.1
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        return f"Error: {e}"
-
-def auto_chart(df, uid):
-    """Interactive chart with X/Y axis and chart type selectors."""
-    num_cols = df.select_dtypes(include="number").columns.tolist()
-    cat_cols = df.select_dtypes(exclude="number").columns.tolist()
-    all_cols = df.columns.tolist()
-
-    if len(df) < 2 or not num_cols:
-        return
-
-    # Remove total/summary rows for charting
-    chart_df = df[~df.apply(lambda r: r.astype(str).str.upper().eq("TOTAL").any(), axis=1)].copy()
-    if len(chart_df) < 2:
-        return
-
-    # Guess smart defaults
-    default_x = "month" if "month" in cat_cols else (cat_cols[0] if cat_cols else all_cols[0])
-    default_y = num_cols[0] if num_cols else all_cols[-1]
-    default_color = next((c for c in cat_cols if c not in [default_x, "facility", "date"]), None)
-
-    # Chart controls
-    with st.expander("📊 Chart Options", expanded=True):
-        ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
-        with ctrl1:
-            chart_type = st.selectbox("Chart Type",
-                ["Bar", "Line", "Area", "Scatter", "Pie"],
-                key=f"ctype_{uid}")
-        with ctrl2:
-            x_axis = st.selectbox("X Axis", all_cols,
-                index=all_cols.index(default_x) if default_x in all_cols else 0,
-                key=f"xaxis_{uid}")
-        with ctrl3:
-            y_axis = st.selectbox("Y Axis", num_cols,
-                index=num_cols.index(default_y) if default_y in num_cols else 0,
-                key=f"yaxis_{uid}")
-        with ctrl4:
-            color_opts = ["None"] + [c for c in cat_cols if c != x_axis]
-            color_col = st.selectbox("Color By", color_opts,
-                index=color_opts.index(default_color) if default_color in color_opts else 0,
-                key=f"color_{uid}")
-            color_col = None if color_col == "None" else color_col
-
-    # Build chart
-    title = f"{y_axis.replace('_',' ').title()} by {x_axis.replace('_',' ').title()}"
-    plot_df = chart_df.sort_values(x_axis)
-
-    try:
-        if chart_type == "Bar":
-            fig = px.bar(plot_df, x=x_axis, y=y_axis, color=color_col,
-                        title=title, color_continuous_scale="Greens" if not color_col else None)
-            fig.update_layout(xaxis_tickangle=-30)
-        elif chart_type == "Line":
-            fig = px.line(plot_df, x=x_axis, y=y_axis, color=color_col,
-                         markers=True, title=title)
-        elif chart_type == "Area":
-            fig = px.area(plot_df, x=x_axis, y=y_axis, color=color_col, title=title)
-        elif chart_type == "Scatter":
-            y2_opts = [c for c in num_cols if c != y_axis]
-            size_col = y2_opts[0] if y2_opts else None
-            fig = px.scatter(plot_df, x=x_axis, y=y_axis, color=color_col,
-                           size=size_col, title=title, hover_data=all_cols[:5])
-        elif chart_type == "Pie":
-            fig = px.pie(plot_df, names=x_axis, values=y_axis, title=title)
-
-        fig.update_layout(
-            height=380,
-            margin=dict(t=40, b=60, l=20, r=20),
-            showlegend=True if color_col else False,
-            xaxis=dict(
-                tickangle=-30,
-                tickfont=dict(size=11),
-                # Format YYYY-MM as "Jan 2026" for readability
-                tickformat="%b %Y" if x_axis == "month" else None,
-            ),
-            yaxis=dict(tickfont=dict(size=11)),
-        )
-        st.plotly_chart(fig, use_container_width=True, key=f"chart_{uid}")
-    except Exception as e:
-        st.caption(f"Chart error: {e}")
-
-def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None):
-    uid = panel_id or label
-    c1, c2 = st.columns(2)
-    with c1:
-        st.download_button("Download CSV", data=df_to_csv_bytes(df),
-            file_name=f"{label}.csv", mime="text/csv", key=f"csv_{uid}")
-    with c2:
-        st.download_button("Download Excel", data=df_to_excel_bytes(df),
-            file_name=f"{label}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"xlsx_{uid}")
-    st.caption(f"{len(df)} results")
-
-    if is_kpi and len(df)==1:
-        render_kpi_cards(df.copy())
-    elif "month" in df.columns and df["month"].nunique()>1:
-        # Chart first, then tabbed data
-        auto_chart(df, uid)
-        months = sorted(df["month"].unique(), reverse=True)
-        tabs = st.tabs([str(m) for m in months]+["All Data"])
-        for i, month in enumerate(months):
-            with tabs[i]:
-                month_df = df[df["month"]==month].reset_index(drop=True)
-                st.dataframe(format_dataframe(add_summary_row(month_df.copy())), use_container_width=True, height=280)
-                st.download_button(f"Download {month}", data=df_to_csv_bytes(month_df),
-                    file_name=f"{label}_{month}.csv", mime="text/csv", key=f"csv_{uid}_{month}_{i}")
-        with tabs[-1]:
-            st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=280)
-    else:
-        # Chart + table side by side for single-month data with enough rows
-        if len(df) >= 3:
-            auto_chart(df, uid)
-        st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=320)
-
-    with st.expander("View SQL"):
-        st.code(sql, language='sql')
-
-# ── SESSION STATE ─────────────────────────────────────────────────────────────
+# ── SESSION STATE ───────────────────────────────────────────────────────────
+HISTORY_CAP = 50
 defaults = {
-    'messages': [], 'current_df': None, 'current_sql': None,
-    'current_label': None, 'num_months': 1, 'is_kpi': False,
-    'pending_clarification': None, 'pending_question': None,
-    'display_time': '', 'explorations': None,
-    'result_history': [], 'conversation_history': [],
-    'active_clarifications': None, 'clarification_question': None,
-    'clarification_date_from': None, 'clarification_date_to': None,
-    'combined_results': None
+    "messages": [], "conversation_history": [], "result_history": [],
+    "active_clarifications": None, "clarification_question": None,
+    "clarification_date_from": None, "clarification_date_to": None,
+    "explorations": None, "_results": None, "_results_label": None,
+    "ctx_locked": False, "ctx_edit_step": None, "ctx_analysis_type": None,
+    "ctx_facility": None, "ctx_timeframe_label": None,
+    "ctx_date_from": None, "ctx_date_to": None, "ctx_num_months": 1,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
-# ── SIDEBAR ───────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown(f"## Waste Ops MIS")
-    st.caption(f"👤 {user_name} ({user_role})")
-    if st.button("Logout"): st.session_state.authenticated = False; st.session_state.username = None; st.rerun()
-    st.divider()
 
-    # Facility selector — restrict managers to their facility
-    st.markdown("**Facility**")
-    if user_role == "manager":
-        selected_facility = st.selectbox("facility", [user_facility], label_visibility="collapsed")
-        facility_selected = True
-    else:
-        all_fac_list = FACILITIES[1:]
-        select_all = st.checkbox("All Facilities", value=True, key="all_fac_cb")
-        if select_all:
-            selected_facilities = all_fac_list
-            selected_facility = "All Facilities"
-        else:
-            selected_facilities = st.multiselect(
-                "Select facilities", all_fac_list,
-                default=[], key="fac_multiselect",
-                label_visibility="collapsed"
-            )
-            selected_facility = selected_facilities[0] if len(selected_facilities) == 1 else "All Facilities"
-        facility_selected = bool(selected_facilities) if not select_all else True
+def _cap(key):
+    if len(st.session_state[key]) > HISTORY_CAP:
+        st.session_state[key] = st.session_state[key][-HISTORY_CAP:]
 
-    st.divider()
-    st.markdown("**Time period**")
-    today = date.today()
-    years = list(range(2023, today.year+2))
-    MONTH_PH = "— Select —"
-    YEAR_PH = "— Year —"
-    c1, c2 = st.columns(2)
+
+# ── CONTEXT DERIVATION (single source of truth, defined before ANY rendering) ─
+selected_facility = st.session_state.ctx_facility or "All Facilities"
+facility_selected = bool(st.session_state.ctx_facility) and st.session_state.ctx_locked
+date_from = st.session_state.ctx_date_from or ""
+date_to = st.session_state.ctx_date_to or ""
+display_time = st.session_state.ctx_timeframe_label or ""
+time_selected = bool(date_from and date_to) and st.session_state.ctx_locked
+num_months = st.session_state.ctx_num_months
+
+# ── ANALYSIS TYPE MAP ─────────────────────────────────────────────────────────
+ANALYSIS_TYPES = {name: keys for name, keys in SIDEBAR_GROUPS.items()}
+ANALYSIS_TYPES["Custom AI Query"] = None
+TIMEFRAME_PRESETS = {"Last 7 days": 7, "Last 30 days": 30, "Last 3 months": 90, "Last 6 months": 180, "Last 12 months": 365}
+MONTH_PH, YEAR_PH = "— Select —", "— Year —"
+TODAY = date.today()
+YEARS = list(range(2023, TODAY.year + 2))
+
+
+def reset_context():
+    for k in ["ctx_locked", "ctx_edit_step", "ctx_analysis_type", "ctx_facility",
+              "ctx_timeframe_label", "ctx_date_from", "ctx_date_to"]:
+        st.session_state[k] = defaults[k]
+    st.session_state.ctx_num_months = 1
+    for k in ["active_clarifications", "explorations", "_results"]:
+        st.session_state[k] = None
+
+
+def render_context_builder():
+    edit_step = st.session_state.ctx_edit_step
+    locked = st.session_state.ctx_locked
+    show_type = (not locked) or edit_step == "type"
+    show_facility = (not locked) or edit_step == "facility"
+    show_time = (not locked) or edit_step == "time"
+
+    if show_type:
+        st.markdown("**1 · What do you want to analyse?**")
+        with st.container(key="analysis_cards"):
+            type_options = list(ANALYSIS_TYPES.keys())
+            cols = st.columns(4)
+            for i, opt in enumerate(type_options):
+                with cols[i % 4]:
+                    is_selected = st.session_state.ctx_analysis_type == opt
+                    if st.button(opt, key=f"card_{opt}", use_container_width=True,
+                                 type="primary" if is_selected else "secondary"):
+                        st.session_state.ctx_analysis_type = opt
+                        st.rerun()
+
+    if show_facility:
+        st.markdown("**2 · Which facility?**")
+        fac_options = [user_facility] if user_role == "manager" else FACILITIES
+        chosen = st.pills("Facility", fac_options, default=st.session_state.ctx_facility,
+                           label_visibility="collapsed", key="pill_facility")
+        if chosen is not None:
+            st.session_state.ctx_facility = chosen
+
+    if show_time:
+        st.markdown("**3 · Timeframe**")
+        tf_options = list(TIMEFRAME_PRESETS.keys()) + ["Custom range"]
+        tf_default = st.session_state.ctx_timeframe_label if st.session_state.ctx_timeframe_label in tf_options else None
+        chosen_tf = st.pills("Timeframe", tf_options, default=tf_default, label_visibility="collapsed", key="pill_time")
+
+        if chosen_tf in TIMEFRAME_PRESETS:
+            days = TIMEFRAME_PRESETS[chosen_tf]
+            st.session_state.ctx_date_from = str(TODAY - timedelta(days=days))
+            st.session_state.ctx_date_to = str(TODAY)
+            st.session_state.ctx_timeframe_label = chosen_tf
+            st.session_state.ctx_num_months = max(1, round(days / 30))
+            st.caption(f"{st.session_state.ctx_date_from} to {st.session_state.ctx_date_to}")
+        elif chosen_tf == "Custom range":
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("From")
+                fm = st.selectbox("From Month", [MONTH_PH] + MONTHS_FULL, index=0, key="cr_fm", label_visibility="collapsed")
+                fy_str = st.selectbox("From Year", [YEAR_PH] + YEARS, index=0, key="cr_fy", label_visibility="collapsed")
+            with c2:
+                st.markdown("To")
+                tm = st.selectbox("To Month", [MONTH_PH] + MONTHS_FULL, index=0, key="cr_tm", label_visibility="collapsed")
+                ty_str = st.selectbox("To Year", [YEAR_PH] + YEARS, index=0, key="cr_ty", label_visibility="collapsed")
+            if fm != MONTH_PH and tm != MONTH_PH and fy_str != YEAR_PH and ty_str != YEAR_PH:
+                fy_c, ty_c = int(fy_str), int(ty_str)
+                fmn, tmn = int(MONTH_NUM[fm]), int(MONTH_NUM[tm])
+                st.session_state.ctx_date_from = f"{fy_c}-{str(fmn).zfill(2)}-01"
+                last_day = calendar.monthrange(ty_c, tmn)[1]
+                st.session_state.ctx_date_to = f"{ty_c}-{str(tmn).zfill(2)}-{last_day}"
+                st.session_state.ctx_num_months = max(1, (ty_c - fy_c) * 12 + (tmn - fmn) + 1)
+                st.session_state.ctx_timeframe_label = f"{fm} {fy_c} – {tm} {ty_c}"
+                st.caption(f"{st.session_state.ctx_date_from} to {st.session_state.ctx_date_to}")
+
+    ready = bool(st.session_state.ctx_analysis_type and st.session_state.ctx_facility and st.session_state.ctx_date_from)
+    if st.button("Update selection →" if locked else "Start analysis →", type="primary", disabled=not ready, key="lock_ctx_btn"):
+        st.session_state.ctx_locked = True
+        st.session_state.ctx_edit_step = None
+        st.rerun()
+    if locked and edit_step and st.button("Cancel", key="cancel_edit_ctx"):
+        st.session_state.ctx_edit_step = None
+        st.rerun()
+
+
+def render_context_bar():
+    c1, c2, c3, c4 = st.columns([2.6, 2.2, 2.6, 1])
     with c1:
-        st.markdown("From")
-        fm = st.selectbox("From Month", [MONTH_PH]+MONTHS_FULL, index=0, key="cr_fm", label_visibility="collapsed")
-        fy_str = st.selectbox("From Year", [YEAR_PH]+years, index=0, key="cr_fy", label_visibility="collapsed")
+        if st.button(f"🔎  {st.session_state.ctx_analysis_type}  ✎", key="edit_type", use_container_width=True):
+            st.session_state.ctx_edit_step = "type"; st.rerun()
     with c2:
-        st.markdown("To")
-        tm = st.selectbox("To Month", [MONTH_PH]+MONTHS_FULL, index=0, key="cr_tm", label_visibility="collapsed")
-        ty_str = st.selectbox("To Year", [YEAR_PH]+years, index=0, key="cr_ty", label_visibility="collapsed")
+        if st.button(f"📍  {st.session_state.ctx_facility}  ✎", key="edit_facility", use_container_width=True):
+            st.session_state.ctx_edit_step = "facility"; st.rerun()
+    with c3:
+        if st.button(f"🗓️  {st.session_state.ctx_timeframe_label}  ✎", key="edit_time", use_container_width=True):
+            st.session_state.ctx_edit_step = "time"; st.rerun()
+    with c4:
+        if st.button("Reset", key="reset_ctx_btn", use_container_width=True):
+            reset_context(); st.rerun()
+    st.markdown(
+        f'<p class="ctx-caption">Every question below applies to '
+        f'<b>{st.session_state.ctx_facility} · {st.session_state.ctx_timeframe_label}</b> '
+        f'until you edit a selection above.</p>', unsafe_allow_html=True)
 
-    time_selected = fm!=MONTH_PH and tm!=MONTH_PH and fy_str!=YEAR_PH and ty_str!=YEAR_PH
-    if time_selected:
-        fy_c = int(fy_str); ty_c = int(ty_str)
-        fmn = int(MONTH_NUM[fm]); tmn = int(MONTH_NUM[tm])
-        date_from = f"{fy_c}-{str(fmn).zfill(2)}-01"
-        last_day = calendar.monthrange(ty_c, tmn)[1]
-        date_to = f"{ty_c}-{str(tmn).zfill(2)}-{last_day}"
-        num_months = max(1,(ty_c-fy_c)*12+(tmn-fmn)+1)
-        display_time = f"{fm} {fy_c} to {tm} {ty_c}"
-        st.caption(f"{date_from} to {date_to}")
-    else:
-        date_from = date_to = display_time = ""
-        num_months = 1
-        st.caption("Select From and To period")
 
-    st.divider()
-    st.markdown("**Analytics**")
-    st.caption("Run full group at once")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("All Inward", use_container_width=True, key="all_inward"):
-            if facility_selected and time_selected:
-                st.session_state["_action"] = {"type":"combined","keys":["inward: kpi summary","inward: vendor analysis","inward: vendor location analysis"],"label":f"Inward Full Analysis | {selected_facility} | {display_time}"}
-                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
+def render_type_presets():
+    at = st.session_state.ctx_analysis_type
+    if not at or at == "Custom AI Query":
+        st.caption("Ask your question about this facility and timeframe in the chat box below.")
+        return
+    keys = ANALYSIS_TYPES.get(at) or []
+    if not keys:
+        return
+    st.caption(f"Quick presets — {at}")
+    combined_keys = ANALYSIS_TYPE_COMBINED.get(at)
+    n_cols = min(4, len(keys) + (1 if combined_keys else 0))
+    cols = st.columns(n_cols)
+    col_i = 0
+    if combined_keys:
+        with cols[col_i % n_cols]:
+            if st.button(f"All {at.split(' ')[0]}", key=f"combined_{at}", use_container_width=True):
+                st.session_state["_action"] = {
+                    "type": "combined", "keys": combined_keys,
+                    "label": f"{at} Full Analysis | {st.session_state.ctx_facility} | {st.session_state.ctx_timeframe_label}"
+                }
+                st.session_state["active_clarifications"] = None
+                st.session_state["explorations"] = None
                 st.rerun()
-    with col2:
-        if st.button("All Outward", use_container_width=True, key="all_outward"):
-            if facility_selected and time_selected:
-                st.session_state["_action"] = {"type":"combined","keys":["outward: kpi summary","outward: customer analysis","outward: customer destination analysis"],"label":f"Outward Full Analysis | {selected_facility} | {display_time}"}
-                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
-                st.rerun()
-    col3, col4 = st.columns(2)
-    with col3:
-        if st.button("All Production", use_container_width=True, key="all_prod"):
-            if facility_selected and time_selected:
-                st.session_state["_action"] = {"type":"combined","keys":["production: kpi summary","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"],"label":f"Production Full Analysis | {selected_facility} | {display_time}"}
-                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
-                st.rerun()
-    with col4:
-        if st.button("All ULB", use_container_width=True, key="all_ulb"):
-            if facility_selected and time_selected:
-                st.session_state["_action"] = {"type":"combined","keys":["ulb: kpi summary","ulb: ward location analysis","ulb: driver analysis"],"label":f"ULB Full Analysis | {selected_facility} | {display_time}"}
-                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
-                st.rerun()
-    col5, col6 = st.columns(2)
-    with col5:
-        if st.button("All Training", use_container_width=True, key="all_training"):
-            if facility_selected and time_selected:
-                st.session_state["_action"] = {"type":"combined","keys":["training: kpi summary","training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],"label":f"Training Full Analysis | {selected_facility} | {display_time}"}
-                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
-                st.rerun()
-    with col6:
-        if st.button("Environmental", use_container_width=True, key="all_env"):
-            if facility_selected and time_selected:
-                st.session_state["_action"] = {"type":"combined","keys":["impact: inward kpi","impact: inward by source type","impact: dispatch kpi","impact: dispatch by destination type","impact: recovery rate trend"],"label":f"Environmental Impact | {selected_facility} | {display_time}"}
-                st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
-                st.rerun()
-    st.divider()
-    for group_name, preset_keys in SIDEBAR_GROUPS.items():
-        with st.expander(group_name, expanded=False):
-            for key in preset_keys:
-                label = key.split(": ")[1].title()
-                if st.button(label, key=f"btn_{key}", use_container_width=True):
-                    st.session_state["_action"] = {"type":"library","key":key,"is_kpi":"kpi" in key}
-                    st.session_state.pop("active_clarifications", None); st.session_state.pop("explorations", None)
-                    st.rerun()
-    st.divider()
-    st.caption("Or type a question below")
-
-# ── MAIN ──────────────────────────────────────────────────────────────────────
-st.markdown('<div style="font-size:20px;font-weight:600;color:#2C2A28;margin-bottom:6px;">Waste Operations MIS</div>', unsafe_allow_html=True)
-
-if not facility_selected or not time_selected:
-    missing = []
-    if not facility_selected: missing.append("Facility")
-    if not time_selected: missing.append("Time Period")
-    st.warning(f"⚠️ Please select {' and '.join(missing)} to begin")
-else:
-    st.markdown(f'<div style="background:#F0F8F0;border:1px solid #B8D4B8;border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:16px;margin-bottom:1rem;font-size:12px;"><span style="color:#4A7A4A;">✓</span><span style="color:#9B9490;">Facility</span><span style="color:#2C2A28;font-weight:500;">{selected_facility}</span><span style="color:#E8E0D5;">|</span><span style="color:#9B9490;">Period</span><span style="color:#2C2A28;font-weight:500;">{display_time}</span><span style="color:#E8E0D5;">|</span><span style="color:#9B9490;">{date_from} to {date_to}</span></div>', unsafe_allow_html=True)
-
-# ── CHAT HISTORY ──────────────────────────────────────────────────────────────
-for msg in st.session_state.messages:
-    with st.chat_message(msg['role']):
-        st.write(msg['content'])
-
-# ── CHAT INPUT ────────────────────────────────────────────────────────────────
-question = st.chat_input("Ask anything about your waste operations data...")
-
-if not facility_selected or not time_selected:
-    st.info("👈 Please select a Facility and Time Period in the sidebar to begin analysis.")
-    st.stop()
-
-# ── ACTION DISPATCHER ─────────────────────────────────────────────────────────
-# Functions defined BEFORE action is popped
-
-def run_and_show_combined(keys, label):
-    """Run queries, store results in session state, render."""
-    results = []
+        col_i += 1
     for key in keys:
-        sql = inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
-        df, error = run_query(sql)
+        label = key.split(": ")[1].title()
+        with cols[col_i % n_cols]:
+            if st.button(label, key=f"preset_{key}", use_container_width=True):
+                st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
+                st.session_state["active_clarifications"] = None
+                st.session_state["explorations"] = None
+                st.rerun()
+        col_i += 1
+
+
+# ── ACTION DISPATCHER HELPERS ─────────────────────────────────────────────────
+def run_and_show_combined(keys, label):
+    """Runs a set of preset queries. Only the resulting analysis panels are
+    shown — no 'Loaded N analyses' bookkeeping message is added to the chat,
+    since the section headings and context bar already say what's showing."""
+    result_rows = []
+    for key in keys:
+        sql = db.inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
+        df, error = db.run_query(sql, SUPABASE_URL)
         if error:
             st.error(f"Query failed for {key}: {error}")
         elif df is not None:
-            results.append((key, sql, df.to_dict("records"), df.columns.tolist(), "kpi" in key))
-    if results:
-        st.session_state["_results"] = results
+            result_rows.append((key, sql, df.to_dict("records"), df.columns.tolist(), "kpi" in key))
+    if result_rows:
+        st.session_state["_results"] = result_rows
         st.session_state["_results_label"] = label
-        st.session_state.messages.append({"role": "user", "content": label})
-        st.session_state.messages.append({"role": "assistant", "content": f"Loaded {len(results)} analyses."})
+
 
 def run_and_show_single(lib_key, is_kpi):
-    """Run single query, store result in session state."""
-    label = f"{lib_key.title()} | {selected_facility} | {display_time}"
-    sql = inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
-    df, error = run_query(sql)
+    sql = db.inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
+    df, error = db.run_query(sql, SUPABASE_URL)
     if error:
-        st.session_state.messages.append({"role": "user", "content": label})
-        st.session_state.messages.append({"role": "assistant", "content": f"Error: {error}"})
+        st.error(f"Error running {lib_key}: {error}")
         st.session_state["_results"] = None
     else:
-        panel_label = lib_key.replace(" ", "_").replace(":", "")
         st.session_state["_results"] = [(lib_key, sql, df.to_dict("records"), df.columns.tolist(), is_kpi)]
-        st.session_state["_results_label"] = label
-        st.session_state.messages.append({"role": "user", "content": label})
-        st.session_state.messages.append({"role": "assistant", "content": f"Found {len(df)} results."})
+        st.session_state["_results_label"] = f"{lib_key.title()} | {selected_facility} | {display_time}"
 
-# Now pop and handle action
-action = st.session_state.pop("_action", None)
 
-# ── HANDLE BUTTON ACTIONS ─────────────────────────────────────────────────────
-if action and action.get("type") == "combined":
-    run_and_show_combined(action["keys"], action["label"])
+# ── PAGE: ANALYTICS ───────────────────────────────────────────────────────────
+def analytics_page():
+    theme.render_topbar(user_name, user_role, on_logout=_logout)
 
-elif action and action.get("type") == "library":
-    run_and_show_single(action["key"], action["is_kpi"])
-
-# ── RENDER STORED RESULTS (survives chart widget reruns) ──────────────────────
-if st.session_state.get("_results"):
-    results = st.session_state["_results"]
-    for idx, (key, sql, records, columns, is_kpi) in enumerate(results):
-        df = pd.DataFrame(records, columns=columns)
-        st.markdown(f"### {key.split(': ')[1].title()}")
-        panel_label = key.replace(" ", "_").replace(":", "")
-        show_result_panel(df, sql, panel_label, num_months, is_kpi,
-                          panel_id=f"result_{idx}_{panel_label}_{date_from}")
-        st.divider()
-
-# ── HANDLE CLARIFICATION CHOICE ───────────────────────────────────────────────
-elif action and action.get("type") == "clarification":
-    pending = action
-    with st.chat_message("user"):
-        st.write(f"Show me: {pending['choice']}")
-    st.session_state.messages.append({"role": "user", "content": f"Show me: {pending['choice']}"})
-    with st.spinner(f"Running: {pending['choice']}..."):
-        llm_response = ask_groq_sql(
-            pending["question"], pending["choice"], selected_facility,
-            pending["date_from"], pending["date_to"],
-            original_sql=pending.get("original_sql"),
-            original_question=pending.get("original_question")
-        )
-        sql = extract_sql(llm_response)
-        if sql:
-            df, error = run_query(sql)
-            if error:
-                with st.chat_message("assistant"):
-                    st.error(f"Query error: {error}")
-                    st.code(sql, language="sql")
-            else:
-                if not st.session_state.conversation_history:
-                    st.session_state.conversation_history = []
-                st.session_state.conversation_history.append({
-                    "question": pending["question"], "clarification": pending["choice"],
-                    "sql": sql, "result_summary": f"{len(df)} rows"
-                })
-                msg = f"Found {len(df)} results for: {pending['choice']}"
-                st.session_state.messages.append({"role": "assistant", "content": msg})
-                with st.chat_message("assistant"):
-                    st.write(msg)
-                panel_id = f"clarify_{pending['choice'][:20].replace(' ','_')}_{date_from}"
-                show_result_panel(df, sql, "clarification_result", num_months, False, panel_id=panel_id)
-                with st.spinner("Generating exploration suggestions..."):
-                    st.session_state.explorations = get_explorations(
-                        pending["question"], df.columns, selected_facility,
-                        pending["date_from"], pending["date_to"]
-                    )
-                st.session_state._last_sql = sql
-                st.session_state._last_question = pending["question"]
-
-# ── SHOW EXPLORATION SUGGESTIONS ──────────────────────────────────────────────
-if st.session_state.get("explorations"):
-    st.divider()
-    st.markdown("**Want to explore further?**")
-    exp_cols = st.columns(min(len(st.session_state.explorations), 5))
-    for i, exp in enumerate(st.session_state.explorations[:5]):
-        with exp_cols[i]:
-            if st.button(exp["label"], key=f"explore_{i}_{date_from}", help=exp.get("description", ""), use_container_width=True):
-                st.session_state["_action"] = {
-                    "type": "clarification",
-                    "question": exp["label"], "choice": exp["label"],
-                    "date_from": date_from, "date_to": date_to,
-                    "original_sql": st.session_state.get("_last_sql"),
-                    "original_question": st.session_state.get("_last_question")
-                }
-                st.session_state.explorations = None
-                st.rerun()
-
-# ── SHOW CLARIFICATION OPTIONS ────────────────────────────────────────────────
-if st.session_state.get("active_clarifications") and not st.session_state.get("_action"):
-    clarifications = st.session_state["active_clarifications"]
-    q = st.session_state.get("clarification_question", "")
-    d_from = st.session_state.get("clarification_date_from", date_from)
-    d_to = st.session_state.get("clarification_date_to", date_to)
-    st.markdown("---")
-    st.markdown("**How would you like to see this data?**")
-    st.caption(f"Date: {d_from} to {d_to} | {selected_facility}")
-    cols = st.columns(min(len(clarifications), 4))
-    for i, c in enumerate(clarifications[:4]):
-        with cols[i]:
-            if st.button(c["label"], key=f"clarify_{i}_{abs(hash(q))%10000}", help=c.get("description", ""), use_container_width=True):
-                st.session_state["_action"] = {
-                    "type": "clarification",
-                    "question": q, "choice": c["label"],
-                    "date_from": d_from, "date_to": d_to
-                }
-                st.session_state["active_clarifications"] = None
-                st.rerun()
-
-# ── HANDLE FREE-TEXT QUESTION ─────────────────────────────────────────────────
-elif question:
-    with st.chat_message("user"):
-        st.write(question)
-    st.session_state.messages.append({"role": "user", "content": question})
-
-    import re as re2, calendar as cal2
-    import datetime as _dt2
-    date_override_from = date_from
-    date_override_to = date_to
-    _today = _dt2.date.today()
-
-    # Relative date parsing
-    q_lower = question.lower()
-    _matched_relative = False
-
-    # "last N months"
-    _lnm = re2.search(r'last\s+(\d+)\s+month', q_lower)
-    if _lnm:
-        n = int(_lnm.group(1))
-        _to_m = _today.replace(day=1) - _dt2.timedelta(days=1)  # end of last month
-        _from_m = (_to_m.replace(day=1) - _dt2.timedelta(days=1))
-        # go back n months
-        _fm_year = _today.year
-        _fm_month = _today.month - n
-        while _fm_month <= 0:
-            _fm_month += 12; _fm_year -= 1
-        date_override_from = f"{_fm_year}-{str(_fm_month).zfill(2)}-01"
-        date_override_to = _today.strftime("%Y-%m-%d")
-        _matched_relative = True
-
-    # "this month"
-    elif "this month" in q_lower:
-        date_override_from = _today.replace(day=1).strftime("%Y-%m-%d")
-        date_override_to = _today.strftime("%Y-%m-%d")
-        _matched_relative = True
-
-    # "last month"
-    elif "last month" in q_lower:
-        _first_this = _today.replace(day=1)
-        _last_prev = _first_this - _dt2.timedelta(days=1)
-        date_override_from = _last_prev.replace(day=1).strftime("%Y-%m-%d")
-        date_override_to = _last_prev.strftime("%Y-%m-%d")
-        _matched_relative = True
-
-    # "last quarter" / "this quarter"
-    elif "quarter" in q_lower:
-        _qm = (_today.month - 1) // 3 * 3 + 1
-        if "last" in q_lower:
-            _qm -= 3
-            if _qm <= 0: _qm += 12
-        date_override_from = f"{_today.year}-{str(_qm).zfill(2)}-01"
-        _qend = _qm + 2
-        date_override_to = f"{_today.year}-{str(_qend).zfill(2)}-{cal2.monthrange(_today.year, _qend)[1]}"
-        _matched_relative = True
-
-    # "this year" / "last year"
-    elif "this year" in q_lower:
-        date_override_from = f"{_today.year}-01-01"
-        date_override_to = _today.strftime("%Y-%m-%d")
-        _matched_relative = True
-    elif "last year" in q_lower:
-        date_override_from = f"{_today.year-1}-01-01"
-        date_override_to = f"{_today.year-1}-12-31"
-        _matched_relative = True
-
-    # "today" / "yesterday"
-    elif "today" in q_lower:
-        date_override_from = date_override_to = _today.strftime("%Y-%m-%d")
-        _matched_relative = True
-    elif "yesterday" in q_lower:
-        _yest = _today - _dt2.timedelta(days=1)
-        date_override_from = date_override_to = _yest.strftime("%Y-%m-%d")
-        _matched_relative = True
-
-    if not _matched_relative:
-        # Fall back to explicit month names — with OR without year
-        month_map2 = {"jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
-                      "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12"}
-        _cy = str(_today.year)  # current year as default
-
-        # Try with year first: "Jan 2026"
-        year_months = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{4})", question, re2.IGNORECASE)
-
-        # If no year found, try month names alone: "Jan - March", "Jan to March"
-        if not year_months:
-            months_only = re2.findall(r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*", question, re2.IGNORECASE)
-            if len(months_only) >= 2:
-                year_months = [(months_only[0], _cy), (months_only[-1], _cy)]
-            elif len(months_only) == 1:
-                year_months = [(months_only[0], _cy)]
-
-        if len(year_months) >= 2:
-            m1, y1 = year_months[0]; m2, y2 = year_months[-1]
-            date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-            _last2 = cal2.monthrange(int(y2), int(month_map2[m2.lower()[:3]]))[1]
-            date_override_to = f"{y2}-{month_map2[m2.lower()[:3]]}-{_last2}"
-        elif len(year_months) == 1:
-            m1, y1 = year_months[0]
-            date_override_from = f"{y1}-{month_map2[m1.lower()[:3]]}-01"
-            _last1 = cal2.monthrange(int(y1), int(month_map2[m1.lower()[:3]]))[1]
-            date_override_to = f"{y1}-{month_map2[m1.lower()[:3]]}-{_last1}"
-
-    with st.spinner("Understanding your question..."):
-        clarifications = get_clarifications(question, selected_facility, date_override_from, date_override_to)
-
-    if clarifications:
-        st.session_state.messages.append({"role": "assistant", "content": f"How would you like to see this? ({len(clarifications)} options shown)"})
-        st.session_state["active_clarifications"] = clarifications
-        st.session_state["clarification_question"] = question
-        st.session_state["clarification_date_from"] = date_override_from
-        st.session_state["clarification_date_to"] = date_override_to
-        st.rerun()
+    if not st.session_state.ctx_locked or st.session_state.ctx_edit_step:
+        render_context_builder()
     else:
-        with st.spinner("Analysing with Groq AI..."):
-            llm_response = ask_llm(question, selected_facility, date_override_from, date_override_to)
-            sql = extract_sql(llm_response)
+        render_context_bar()
+        render_type_presets()
+
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.write(msg["content"])
+
+    question = st.chat_input("Ask anything about your waste operations data...")
+
+    if not facility_selected or not time_selected:
+        st.info("👆 Finish building your analysis above (analysis type, facility, timeframe) to begin.")
+        return
+
+    action = st.session_state.pop("_action", None)
+
+    if action and action.get("type") == "combined":
+        run_and_show_combined(action["keys"], action["label"])
+    elif action and action.get("type") == "library":
+        run_and_show_single(action["key"], action["is_kpi"])
+
+    if st.session_state.get("_results"):
+        for idx, (key, sql, records, columns, is_kpi) in enumerate(st.session_state["_results"]):
+            df = pd.DataFrame(records, columns=columns)
+            st.markdown(f"### {key.split(': ')[1].title() if ': ' in key else key.title()}")
+            panel_label = key.replace(" ", "_").replace(":", "")
+            results.show_result_panel(df, sql, panel_label, num_months, is_kpi,
+                                       panel_id=f"result_{idx}_{panel_label}_{date_from}")
+            st.divider()
+
+    elif action and action.get("type") == "clarification":
+        pending = action
+        with st.chat_message("user"):
+            st.write(f"Show me: {pending['choice']}")
+        st.session_state.messages.append({"role": "user", "content": f"Show me: {pending['choice']}"})
+        with st.spinner(f"Running: {pending['choice']}..."):
+            llm_response = llm.generate_sql(
+                groq_client, pending["question"], pending["choice"], selected_facility,
+                pending["date_from"], pending["date_to"], original_sql=pending.get("original_sql"))
+            sql = results.extract_sql(llm_response)
             if sql:
-                df, error = run_query(sql)
+                df, error = db.run_query(sql, SUPABASE_URL)
                 if error:
                     with st.chat_message("assistant"):
                         st.error(f"Query error: {error}")
-                        st.code(sql, language="sql")
                 else:
-                    if not st.session_state.conversation_history:
-                        st.session_state.conversation_history = []
                     st.session_state.conversation_history.append({
-                        "question": question, "clarification": None,
-                        "sql": sql, "result_summary": f"{len(df)} rows"
-                    })
-                    msg = f"Found {len(df)} results."
+                        "question": pending["question"], "clarification": pending["choice"],
+                        "sql": sql, "result_summary": f"{len(df)} rows"})
+                    _cap("conversation_history")
+                    msg = f"Found {len(df)} results for: {pending['choice']}"
                     st.session_state.messages.append({"role": "assistant", "content": msg})
+                    _cap("messages")
                     with st.chat_message("assistant"):
                         st.write(msg)
-                    panel_id = f"freetext_{date_from}_{abs(hash(question))%10000}"
-                    show_result_panel(df, sql, "custom_query", num_months, False, panel_id=panel_id)
-                    st.session_state._last_sql = sql
-                    st.session_state._last_question = question
+                    panel_id = f"clarify_{pending['choice'][:20].replace(' ', '_')}_{date_from}"
+                    results.show_result_panel(df, sql, "clarification_result", num_months, False, panel_id=panel_id)
                     with st.spinner("Generating exploration suggestions..."):
-                        st.session_state.explorations = get_explorations(
-                            question, df.columns, selected_facility, date_override_from, date_override_to
-                        )
+                        st.session_state.explorations = llm.get_suggestions(
+                            groq_client, "explore", pending["question"], selected_facility,
+                            pending["date_from"], pending["date_to"], df_columns=df.columns)
+                    st.session_state["_last_sql"] = sql
+                    st.session_state["_last_question"] = pending["question"]
+
+    if st.session_state.get("explorations"):
+        st.divider()
+        st.markdown("**Want to explore further?**")
+        exp_cols = st.columns(min(len(st.session_state.explorations), 5))
+        for i, exp in enumerate(st.session_state.explorations[:5]):
+            with exp_cols[i]:
+                if st.button(exp["label"], key=f"explore_{i}_{date_from}", help=exp.get("description", ""), use_container_width=True):
+                    st.session_state["_action"] = {
+                        "type": "clarification", "question": exp["label"], "choice": exp["label"],
+                        "date_from": date_from, "date_to": date_to,
+                        "original_sql": st.session_state.get("_last_sql"),
+                    }
+                    st.session_state.explorations = None
                     st.rerun()
-            else:
-                with st.chat_message("assistant"):
-                    st.write(llm_response)
-                st.session_state.messages.append({"role": "assistant", "content": llm_response})
+
+    if st.session_state.get("active_clarifications") and not st.session_state.get("_action"):
+        clarifications = st.session_state["active_clarifications"]
+        q = st.session_state.get("clarification_question", "")
+        d_from = st.session_state.get("clarification_date_from", date_from)
+        d_to = st.session_state.get("clarification_date_to", date_to)
+        st.markdown("---")
+        st.markdown("**How would you like to see this data?**")
+        st.caption(f"Date: {d_from} to {d_to} | {selected_facility}")
+        cols = st.columns(min(len(clarifications), 4))
+        for i, c in enumerate(clarifications[:4]):
+            with cols[i]:
+                if st.button(c["label"], key=f"clarify_{i}_{abs(hash(q))%10000}", help=c.get("description", ""), use_container_width=True):
+                    st.session_state["_action"] = {"type": "clarification", "question": q, "choice": c["label"],
+                                                    "date_from": d_from, "date_to": d_to}
+                    st.session_state["active_clarifications"] = None
+                    st.rerun()
+
+    elif question:
+        with st.chat_message("user"):
+            st.write(question)
+        st.session_state.messages.append({"role": "user", "content": question})
+        _cap("messages")
+
+        date_override_from, date_override_to = nlp_dates.parse_relative_dates(question, date_from, date_to)
+
+        with st.spinner("Understanding your question..."):
+            clarifications = llm.get_suggestions(groq_client, "clarify", question, selected_facility,
+                                                  date_override_from, date_override_to)
+
+        if clarifications:
+            st.session_state.messages.append({"role": "assistant", "content": f"How would you like to see this? ({len(clarifications)} options shown)"})
+            _cap("messages")
+            st.session_state["active_clarifications"] = clarifications
+            st.session_state["clarification_question"] = question
+            st.session_state["clarification_date_from"] = date_override_from
+            st.session_state["clarification_date_to"] = date_override_to
+            st.rerun()
+        else:
+            with st.spinner("Analysing with Groq AI..."):
+                llm_response = llm.generate_sql(groq_client, question, "", selected_facility, date_override_from, date_override_to)
+                sql = results.extract_sql(llm_response)
+                if sql:
+                    df, error = db.run_query(sql, SUPABASE_URL)
+                    if error:
+                        with st.chat_message("assistant"):
+                            st.error(f"Query error: {error}")
+                    else:
+                        st.session_state.conversation_history.append({
+                            "question": question, "clarification": None, "sql": sql, "result_summary": f"{len(df)} rows"})
+                        _cap("conversation_history")
+                        msg = f"Found {len(df)} results."
+                        st.session_state.messages.append({"role": "assistant", "content": msg})
+                        _cap("messages")
+                        with st.chat_message("assistant"):
+                            st.write(msg)
+                        panel_id = f"freetext_{date_from}_{abs(hash(question)) % 10000}"
+                        results.show_result_panel(df, sql, "custom_query", num_months, False, panel_id=panel_id)
+                        st.session_state["_last_sql"] = sql
+                        st.session_state["_last_question"] = question
+                        with st.spinner("Generating exploration suggestions..."):
+                            st.session_state.explorations = llm.get_suggestions(
+                                groq_client, "explore", question, selected_facility,
+                                date_override_from, date_override_to, df_columns=df.columns)
+                        st.rerun()
+                else:
+                    with st.chat_message("assistant"):
+                        st.write(llm_response)
+                    st.session_state.messages.append({"role": "assistant", "content": llm_response})
+                    _cap("messages")
+
+
+# ── PAGE: REPORTS ─────────────────────────────────────────────────────────────
+def reports_page():
+    theme.render_topbar(user_name, user_role, on_logout=_logout)
+    st.markdown("### Generate a report")
+
+    if not facility_selected or not time_selected:
+        st.info("Set your facility and timeframe on the Analytics page first — Reports uses that same context.")
+        return
+
+    st.markdown(
+        f'<p class="ctx-caption">This report covers <b>every analysis type</b> for '
+        f'<b>{selected_facility} · {display_time}</b>.</p>', unsafe_allow_html=True)
+
+    if st.button("Generate PDF report", type="primary"):
+        with st.spinner("Compiling every analysis, chart, and table into your report..."):
+            pdf_bytes = reports.generate_report_pdf(selected_facility, date_from, date_to, display_time, SUPABASE_URL)
+        st.session_state["_report_pdf"] = pdf_bytes
+        st.success("Report ready.")
+
+    if st.session_state.get("_report_pdf"):
+        st.download_button(
+            "Download report PDF", data=st.session_state["_report_pdf"],
+            file_name=f"waste_ops_report_{selected_facility.replace(' ', '_')}_{date_from}_{date_to}.pdf",
+            mime="application/pdf", type="primary",
+        )
+
+
+# ── NAVIGATION ─────────────────────────────────────────────────────────────────
+pages = [
+    st.Page(analytics_page, title="Analytics", icon="💬", default=True),
+    st.Page(reports_page, title="Reports", icon="📄"),
+]
+st.navigation(pages).run()

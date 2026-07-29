@@ -243,17 +243,36 @@ def sync():
     all_inward, all_production, all_outward, all_expense, all_revenue = [], [], [], [], []
 
     facility_data = {}
+    failed_facilities = []
     for facility, sheet_id in SHEETS.items():
         print(f"\n📊 Loading {facility}...")
-        data = load_facility(client, facility, sheet_id)
+        try:
+            data = load_facility(client, facility, sheet_id)
+        except Exception as e:
+            print(f"  ❌ {facility} failed to load: {e}")
+            failed_facilities.append(facility)
+            time.sleep(3)
+            continue
         facility_data[facility] = data
         time.sleep(3)
 
-        if "Inward"     in data: all_inward.append(process_inward(data["Inward"]))
-        if "Production" in data: all_production.append(process_production(data["Production"]))
-        if "Outward"    in data: all_outward.append(process_outward(data["Outward"]))
-        if "Expenses"   in data: all_expense.append(process_expense(data["Expenses"]))
-        if "Revenue"    in data: all_revenue.append(process_revenue(data["Revenue"]))
+        try:
+            if "Inward"     in data: all_inward.append(process_inward(data["Inward"]))
+            if "Production" in data: all_production.append(process_production(data["Production"]))
+            if "Outward"    in data: all_outward.append(process_outward(data["Outward"]))
+            if "Expenses"   in data: all_expense.append(process_expense(data["Expenses"]))
+            if "Revenue"    in data: all_revenue.append(process_revenue(data["Revenue"]))
+        except Exception as e:
+            print(f"  ❌ {facility} failed to process: {e}")
+            failed_facilities.append(facility)
+
+    if failed_facilities:
+        print(f"\n⚠️  {len(failed_facilities)} facilit{'y' if len(failed_facilities)==1 else 'ies'} "
+              f"failed to load: {', '.join(failed_facilities)}")
+        print("⚠️  ABORTING WRITE — refusing to replace tables with partial data.")
+        print("    (This is the fix for the bug where a mid-run failure used to silently")
+        print("     overwrite every facility's data with only whatever had loaded so far.)")
+        return
 
     print("\n💾 Writing to Supabase...")
     datasets = {
