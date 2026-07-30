@@ -18,24 +18,28 @@ warnings.filterwarnings("ignore")
 # ── CONFIG ────────────────────────────────────────────────────────────────────
 SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ.get("SUPABASE_DB_URL")
 
-# For local runs, fall back to secrets.toml
+# For local runs, fall back to secrets.toml — resolved relative to this
+# script's own location, not a hardcoded folder name from an old project.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SECRETS_PATH = os.path.join(SCRIPT_DIR, ".streamlit", "secrets.toml")
+
 if not SUPABASE_URL:
     try:
         import tomllib
-        with open(os.path.expanduser("~/database-chatbot/.streamlit/secrets.toml"), "rb") as f:
+        with open(SECRETS_PATH, "rb") as f:
             secrets = tomllib.load(f)
         SUPABASE_URL = secrets["supabase"]["url"]
     except Exception:
         try:
             import toml
-            secrets = toml.load(os.path.expanduser("~/database-chatbot/.streamlit/secrets.toml"))
+            secrets = toml.load(SECRETS_PATH)
             SUPABASE_URL = secrets["supabase"]["url"]
         except Exception as e:
             raise ValueError(f"Could not load Supabase URL: {e}")
 
 # Google credentials — from env var (GitHub Actions) or local file
 CREDS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-CREDS_PATH = os.path.expanduser("~/database-chatbot/credentials.json")
+CREDS_PATH = os.path.join(SCRIPT_DIR, "credentials.json")
 
 SHEETS = {
     "Hebbagodi":   "1pbZRXWlzqZycbGYp0d_Whr03lNt85-_AlIRBLd8UZEE",

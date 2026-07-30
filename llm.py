@@ -40,6 +40,19 @@ loading_cost, additional_transport_cost
 TABLE: expense — date, facility, category, bill_amount_in_rs
 TABLE: revenue — date, facility, category, bill_amount_in_rs
 NOTE: Use PostgreSQL syntax. Use TO_CHAR(date::date,'YYYY-MM') for monthly grouping instead of strftime.
+
+=== COMPUTED METRIC DEFINITIONS (use these exact formulas — do not improvise) ===
+- "recovery rate" — ALWAYS from the OUTWARD table:
+    (SUM(dispatched_quantity) - SUM(rejected_quantity)) / NULLIF(SUM(dispatched_quantity),0) * 100
+  Never compute this from the inward table. If the question just says "recovery rate"
+  with no other qualifier, it means this outward formula — not an inward summary.
+- "rejection rate" on INWARD:
+    SUM(rejected_quantity) / NULLIF(SUM(received_quantity),0) * 100
+- "rejection rate" on OUTWARD (used when the question is about dispatch/customers):
+    SUM(rejected_quantity) / NULLIF(SUM(dispatched_quantity),0) * 100
+- "acceptance rate" (inward): SUM(accepted_quantity) / NULLIF(SUM(received_quantity),0) * 100
+- If a question names a metric that isn't defined above, do not invent a formula —
+  prefer a clarifying option that asks the user which table/metric they mean.
 """
 
 
@@ -130,9 +143,14 @@ def get_suggestions(client: Groq, mode: str, question: str, facility: str, date_
 User question: "{question}"
 Facility: {facility} | Date range: {date_from} to {date_to}
 {db_context}
+{SCHEMA_CONTEXT}
 
 Generate 4-5 SPECIFIC clarification options that directly answer what the user asked.
 Rules:
+- First identify which TABLE and which COMPUTED METRIC (if any, per the definitions above) the
+  question is actually about. A question about "recovery rate" or "rejection rate" is about the
+  OUTWARD/INWARD tables as defined above — never default to a generic inward material breakdown
+  unless the question is actually about inward material.
 - Each option must be a DIFFERENT angle on the SAME question (not generic options)
 - Use actual column names, metric names, or entity names from the data context
 - Options should be actionable SQL queries (e.g. "By vendor", "Monthly trend", "Top 10 by weight")
@@ -192,6 +210,12 @@ RULES:
 5. production output=material_quantity. outward customer=customer column.
 6. Use LIKE '%name%' for partial name matching
 7. Read-only: SELECT / WITH statements only. Never DROP, DELETE, UPDATE, INSERT, ALTER.
+8. CRITICAL: PostgreSQL's ROUND(x, n) two-argument form only works on the `numeric` type,
+   NOT `double precision`. A division of two SUM()s is `double precision` by default. Any time
+   you use ROUND(..., n) around a computed expression (a percentage, a rate, a ratio), you MUST
+   cast the whole expression to numeric first: ROUND((expr)::numeric, 2) — never ROUND(expr, 2)
+   directly on a division result, or the query will fail with "function round(double precision,
+   integer) does not exist".
 
 {db_context}
 {SCHEMA_CONTEXT}

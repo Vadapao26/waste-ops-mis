@@ -75,10 +75,10 @@ html, body, [class*="css"] {{ font-family: 'Inter', sans-serif !important; }}
 
 /* ── analysis type card grid ──────────────────────────────────────────── */
 .st-key-analysis_cards button {{
-  aspect-ratio: 1.3; height: auto !important; border-radius: 16px !important;
-  font-weight: 600 !important; font-size: 14px !important;
+  aspect-ratio: 2.6; height: auto !important; border-radius: 12px !important;
+  font-weight: 600 !important; font-size: 13px !important;
   display: flex; align-items: center; justify-content: center; text-align: center;
-  white-space: normal !important; padding: 10px !important;
+  white-space: normal !important; padding: 6px 10px !important; min-height: 0 !important;
 }}
 .st-key-analysis_cards button[kind="primary"] {{
   background: {COLORS['sage_bg']} !important; color: {COLORS['sage_text']} !important;

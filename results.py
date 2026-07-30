@@ -1,5 +1,6 @@
 """Result rendering: table formatting, KPI cards, and auto-charting."""
 import io
+import re
 import pandas as pd
 import streamlit as st
 import plotly.express as px

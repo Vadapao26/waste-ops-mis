@@ -41,7 +41,55 @@ def sanitize_sql(sql: str) -> str:
         sql = re.sub(rf'SUM\(\s*{col}\s*\)', f'SUM({col}::numeric)', sql, flags=re.IGNORECASE)
         sql = re.sub(rf'AVG\(\s*{col}\s*\)', f'AVG({col}::numeric)', sql, flags=re.IGNORECASE)
         sql = re.sub(rf'COALESCE\(\s*{col}\s*,', f'COALESCE({col}::numeric,', sql, flags=re.IGNORECASE)
-    return sql
+    return _fix_round_numeric_cast(sql)
+
+
+def _fix_round_numeric_cast(sql: str) -> str:
+    """PostgreSQL's ROUND(x, n) two-argument form only accepts `numeric`, never
+    `double precision` — but a division of two SUM()s is double precision by
+    default. The LLM is instructed to always cast before ROUND, but that's a
+    prompt rule, not a guarantee (this is exactly the kind of SQL-generation
+    inconsistency this whole app has had problems with). This is the code-level
+    safety net: find every ROUND(expr, n) call, and if expr isn't already cast
+    to ::numeric, wrap it — regardless of what the model actually produced."""
+    result = []
+    i = 0
+    lowered = sql.lower()
+    while True:
+        idx = lowered.find("round(", i)
+        if idx == -1:
+            result.append(sql[i:])
+            break
+        result.append(sql[i:idx])
+        open_paren = idx + len("round(")
+        depth = 1
+        pos = open_paren
+        last_top_level_comma = None
+        while pos < len(sql) and depth > 0:
+            ch = sql[pos]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            elif ch == "," and depth == 1:
+                last_top_level_comma = pos
+            pos += 1
+        close_paren = pos  # index of the matching ')'
+
+        if last_top_level_comma is None:
+            # Single-argument ROUND(x) — valid for double precision, leave as-is.
+            result.append(sql[idx:close_paren + 1])
+        else:
+            expr = sql[open_paren:last_top_level_comma]
+            ndigits_part = sql[last_top_level_comma:close_paren]
+            if "::numeric" in expr.lower() or "numeric" in expr.lower():
+                result.append(sql[idx:close_paren + 1])  # already cast
+            else:
+                result.append(f"ROUND(({expr.strip()})::numeric{ndigits_part})")
+        i = close_paren + 1
+    return "".join(result)
 
 
 def is_select_only(sql: str) -> bool:

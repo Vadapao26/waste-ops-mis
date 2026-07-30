@@ -296,13 +296,26 @@ def analytics_page():
         run_and_show_single(action["key"], action["is_kpi"])
 
     if st.session_state.get("_results"):
+        panels_for_pdf = []
         for idx, (key, sql, records, columns, is_kpi) in enumerate(st.session_state["_results"]):
             df = pd.DataFrame(records, columns=columns)
-            st.markdown(f"### {key.split(': ')[1].title() if ': ' in key else key.title()}")
+            sub_title = key.split(': ')[1].title() if ': ' in key else key.title()
+            st.markdown(f"### {sub_title}")
             panel_label = key.replace(" ", "_").replace(":", "")
             results.show_result_panel(df, sql, panel_label, num_months, is_kpi,
                                        panel_id=f"result_{idx}_{panel_label}_{date_from}")
+            panels_for_pdf.append((sub_title, df, is_kpi))
             st.divider()
+
+        # Instant download — built from what's already on screen, no re-querying.
+        report_label = st.session_state.get("_results_label") or st.session_state.ctx_analysis_type or "Analysis"
+        if st.button("📄 Download this as a report (PDF)", key="download_current_report"):
+            with st.spinner("Compiling report..."):
+                pdf_bytes = reports.generate_section_pdf(report_label, panels_for_pdf, selected_facility, display_time)
+            st.download_button(
+                "Save PDF", data=pdf_bytes, key="save_current_report_pdf",
+                file_name=f"{report_label.replace(' ', '_').replace('|', '')[:60]}.pdf", mime="application/pdf",
+            )
 
     elif action and action.get("type") == "clarification":
         pending = action
@@ -327,16 +340,18 @@ def analytics_page():
                     msg = f"Found {len(df)} results for: {pending['choice']}"
                     st.session_state.messages.append({"role": "assistant", "content": msg})
                     _cap("messages")
-                    with st.chat_message("assistant"):
-                        st.write(msg)
-                    panel_id = f"clarify_{pending['choice'][:20].replace(' ', '_')}_{date_from}"
-                    results.show_result_panel(df, sql, "clarification_result", num_months, False, panel_id=panel_id)
+                    # Persist into _results (same store preset buttons use) instead of
+                    # rendering once inline — this is what lets the panel survive a
+                    # later rerun, e.g. changing the chart type dropdown.
+                    st.session_state["_results"] = [("clarification_result", sql, df.to_dict("records"), df.columns.tolist(), False)]
+                    st.session_state["_results_label"] = f"{pending['choice']} | {selected_facility} | {display_time}"
                     with st.spinner("Generating exploration suggestions..."):
                         st.session_state.explorations = llm.get_suggestions(
                             groq_client, "explore", pending["question"], selected_facility,
                             pending["date_from"], pending["date_to"], df_columns=df.columns)
                     st.session_state["_last_sql"] = sql
                     st.session_state["_last_question"] = pending["question"]
+                    st.rerun()
 
     if st.session_state.get("explorations"):
         st.divider()
@@ -406,10 +421,8 @@ def analytics_page():
                         msg = f"Found {len(df)} results."
                         st.session_state.messages.append({"role": "assistant", "content": msg})
                         _cap("messages")
-                        with st.chat_message("assistant"):
-                            st.write(msg)
-                        panel_id = f"freetext_{date_from}_{abs(hash(question)) % 10000}"
-                        results.show_result_panel(df, sql, "custom_query", num_months, False, panel_id=panel_id)
+                        st.session_state["_results"] = [("custom_query", sql, df.to_dict("records"), df.columns.tolist(), False)]
+                        st.session_state["_results_label"] = f"{question} | {selected_facility} | {display_time}"
                         st.session_state["_last_sql"] = sql
                         st.session_state["_last_question"] = question
                         with st.spinner("Generating exploration suggestions..."):
@@ -434,12 +447,16 @@ def reports_page():
         return
 
     st.markdown(
-        f'<p class="ctx-caption">This report covers <b>every analysis type</b> for '
+        f'<p class="ctx-caption">Reports use the context set on the Analytics page: '
         f'<b>{selected_facility} · {display_time}</b>.</p>', unsafe_allow_html=True)
 
-    if st.button("Generate PDF report", type="primary"):
-        with st.spinner("Compiling every analysis, chart, and table into your report..."):
-            pdf_bytes = reports.generate_report_pdf(selected_facility, date_from, date_to, display_time, SUPABASE_URL)
+    st.caption("Pick only the analysis types you need — each one takes time to compile, so smaller is faster.")
+    chosen_types = st.multiselect("Analysis types to include", list(ANALYSIS_TYPE_COMBINED.keys()))
+
+    if st.button("Generate PDF report", type="primary", disabled=not chosen_types):
+        with st.spinner(f"Compiling {len(chosen_types)} analysis type(s) into your report..."):
+            pdf_bytes = reports.generate_selected_types_pdf(
+                chosen_types, selected_facility, date_from, date_to, display_time, SUPABASE_URL)
         st.session_state["_report_pdf"] = pdf_bytes
         st.success("Report ready.")
 
@@ -449,6 +466,10 @@ def reports_page():
             file_name=f"waste_ops_report_{selected_facility.replace(' ', '_')}_{date_from}_{date_to}.pdf",
             mime="application/pdf", type="primary",
         )
+
+    st.divider()
+    st.caption("Tip: after running any analysis on the Analytics page, you can also download just "
+               "that result as a report instantly — no need to come here for a single analysis type.")
 
 
 # ── NAVIGATION ─────────────────────────────────────────────────────────────────

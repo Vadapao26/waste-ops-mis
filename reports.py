@@ -9,6 +9,7 @@ underlying data table — no rows dropped, columns handled via wrapped text and
 auto-scaled font size rather than truncation.
 """
 import io
+import concurrent.futures
 from datetime import datetime
 
 import pandas as pd
@@ -31,6 +32,18 @@ LINE = colors.HexColor("#E9E4DA")
 SAGE = colors.HexColor("#7FA88F")
 SAGE_BG = colors.HexColor("#E7F0E9")
 ROW_ALT = colors.HexColor("#FAF8F4")
+
+# kaleido (chart-to-image) has a known failure mode on some Windows machines
+# where its bundled Chromium subprocess hangs silently instead of raising an
+# exception. A plain try/except never catches a hang. This executor gives
+# chart rendering a hard wall-clock timeout — if it doesn't come back in time,
+# the report proceeds without that chart instead of freezing indefinitely.
+_CHART_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+CHART_TIMEOUT_SECONDS = 12
+
+
+def _render_chart_png(fig):
+    return fig.to_image(format="png", scale=2)
 
 
 def _styles():
@@ -124,10 +137,117 @@ def _chart_image(df: pd.DataFrame, title: str):
             font=dict(size=12, color="#2E2C29"), plot_bgcolor="white", paper_bgcolor="white",
             title_font=dict(size=14),
         )
-        img_bytes = fig.to_image(format="png", scale=2)
+        future = _CHART_EXECUTOR.submit(_render_chart_png, fig)
+        try:
+            img_bytes = future.result(timeout=CHART_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            # Chart rendering hung — skip it and continue with the table.
+            # The stuck worker thread is abandoned (can't be force-killed from
+            # Python), but the app itself is never blocked by it again.
+            return None
         return Image(io.BytesIO(img_bytes), width=17 * cm, height=17 * cm * 380 / 900)
     except Exception:
         return None  # chart rendering is a bonus, never blocks the report
+
+
+def generate_section_pdf(section_title: str, panels: list, facility: str, display_time: str) -> bytes:
+    """Builds a PDF from data ALREADY ON SCREEN — no database queries at all.
+    `panels` is a list of (sub_title, df, is_kpi) tuples, exactly what's sitting
+    in st.session_state['_results'] after any analysis has run. This is the
+    'download what I'm looking at' report — instant, because nothing gets
+    re-fetched. For a report spanning many analysis types instead, see
+    generate_selected_types_pdf below."""
+    styles = _styles()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=2 * cm, rightMargin=2 * cm,
+    )
+    story = [
+        Paragraph(section_title, styles["ReportTitle"]),
+        Paragraph(f"{facility} &nbsp;·&nbsp; {display_time}", styles["ReportSub"]),
+        Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", styles["ReportSub"]),
+        Spacer(1, 0.6 * cm),
+    ]
+
+    for sub_title, df, is_kpi in panels:
+        if df is None or df.empty:
+            continue
+        story.append(Paragraph(sub_title, styles["SectionHeading"]))
+        if is_kpi and len(df) == 1:
+            story.append(_kpi_table(df, styles))
+        else:
+            chart = _chart_image(df, sub_title)
+            if chart:
+                story.append(chart)
+            story.append(Spacer(1, 0.3 * cm))
+            story.append(_data_table(df, styles))
+        story.append(Spacer(1, 0.5 * cm))
+
+    doc.build(story)
+    return buffer.getvalue()
+
+
+def generate_selected_types_pdf(analysis_types: list, facility: str, date_from: str, date_to: str,
+                                 display_time: str, db_url: str) -> bytes:
+    """Same as generate_report_pdf but only runs the analysis types the user
+    actually picked — lets a team pull just what they need instead of waiting
+    for every type to query every time."""
+    styles = _styles()
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=landscape(A4),
+        topMargin=2 * cm, bottomMargin=2 * cm, leftMargin=2 * cm, rightMargin=2 * cm,
+    )
+    story = [
+        Spacer(1, 4 * cm),
+        Paragraph("Waste Operations Report", styles["ReportTitle"]),
+        Paragraph(f"{facility} &nbsp;·&nbsp; {display_time}", styles["ReportSub"]),
+        Spacer(1, 0.3 * cm),
+        Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", styles["ReportSub"]),
+        PageBreak(),
+    ]
+
+    any_section = False
+    for analysis_type in analysis_types:
+        keys = ANALYSIS_TYPE_COMBINED.get(analysis_type, [])
+        section_flowables = [Paragraph(analysis_type, styles["SectionHeading"])]
+        section_has_content = False
+
+        for key in keys:
+            sql = db.inject_filters(QUERY_LIBRARY[key].strip(), facility, date_from, date_to)
+            df, error = db.run_query(sql, db_url)
+            sub_title = key.split(": ")[1].title() if ": " in key else key.title()
+
+            if error:
+                section_flowables.append(Paragraph(f"{sub_title}: unavailable ({error[:120]})", styles["Cell"]))
+                continue
+            if df is None or df.empty:
+                section_flowables.append(Paragraph(f"{sub_title}: no data for this period.", styles["Cell"]))
+                continue
+
+            section_has_content = True
+            section_flowables.append(Paragraph(sub_title, styles["Heading2"]))
+            if "kpi" in key and len(df) == 1:
+                section_flowables.append(_kpi_table(df, styles))
+            else:
+                chart = _chart_image(df, sub_title)
+                if chart:
+                    section_flowables.append(chart)
+                section_flowables.append(Spacer(1, 0.3 * cm))
+                section_flowables.append(_data_table(df, styles))
+            section_flowables.append(Spacer(1, 0.5 * cm))
+
+        if section_has_content:
+            any_section = True
+            story.extend(section_flowables)
+            story.append(PageBreak())
+
+    if not any_section:
+        story.append(Paragraph("No data was available for the selected analysis types.", styles["Normal"]))
+
+    doc.build(story)
+    return buffer.getvalue()
 
 
 def generate_report_pdf(facility: str, date_from: str, date_to: str, display_time: str, db_url: str) -> bytes:
