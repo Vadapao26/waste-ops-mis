@@ -188,11 +188,12 @@ def generate_section_pdf(section_title: str, panels: list, facility: str, displa
     return buffer.getvalue()
 
 
-def generate_selected_types_pdf(analysis_types: list, facility: str, date_from: str, date_to: str,
+def generate_selected_types_pdf(analysis_types: list, facilities, facility_display: str, date_from: str, date_to: str,
                                  display_time: str, db_url: str) -> bytes:
     """Same as generate_report_pdf but only runs the analysis types the user
     actually picked — lets a team pull just what they need instead of waiting
-    for every type to query every time."""
+    for every type to query every time. `facilities` is a list (multi-select
+    aware); `facility_display` is the human-readable string for the title."""
     styles = _styles()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -202,7 +203,7 @@ def generate_selected_types_pdf(analysis_types: list, facility: str, date_from: 
     story = [
         Spacer(1, 4 * cm),
         Paragraph("Waste Operations Report", styles["ReportTitle"]),
-        Paragraph(f"{facility} &nbsp;·&nbsp; {display_time}", styles["ReportSub"]),
+        Paragraph(f"{facility_display} &nbsp;·&nbsp; {display_time}", styles["ReportSub"]),
         Spacer(1, 0.3 * cm),
         Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", styles["ReportSub"]),
         PageBreak(),
@@ -215,7 +216,7 @@ def generate_selected_types_pdf(analysis_types: list, facility: str, date_from: 
         section_has_content = False
 
         for key in keys:
-            sql = db.inject_filters(QUERY_LIBRARY[key].strip(), facility, date_from, date_to)
+            sql = db.inject_filters(QUERY_LIBRARY[key].strip(), facilities, date_from, date_to)
             df, error = db.run_query(sql, db_url)
             sub_title = key.split(": ")[1].title() if ": " in key else key.title()
 

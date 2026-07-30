@@ -127,18 +127,23 @@ def run_query(sql: str, db_url: str):
         return None, str(e)
 
 
-def inject_filters(sql: str, facility: str, date_from: str, date_to: str) -> str:
+def inject_filters(sql: str, facilities, date_from: str, date_to: str) -> str:
     """Fills in the {FACILITY_FILTER} / {AND_FACILITY_FILTER} placeholders used
-    throughout QUERY_LIBRARY. Values are still inlined as literals here (same
-    as before) because they come from constrained UI inputs (pill/date presets),
-    not free text — but kept in one place so tightening this later (e.g. to
-    true bound parameters) only means touching this one function."""
+    throughout QUERY_LIBRARY. `facilities` is a list of facility names (or the
+    single-element list ["All Facilities"] for no filter — kept as a list
+    everywhere rather than a bare string so multi-select "just works" without
+    a separate code path). A bare string is still accepted for backward
+    compatibility and normalized to a single-element list."""
+    if isinstance(facilities, str):
+        facilities = [facilities]
     date_clause = f"date::date BETWEEN '{date_from}' AND '{date_to}'"
-    if facility == "All Facilities":
+    if not facilities or facilities == ["All Facilities"]:
         sql = sql.replace("{FACILITY_FILTER}", f"WHERE {date_clause}")
         sql = sql.replace("{AND_FACILITY_FILTER}", f"AND {date_clause}")
     else:
-        safe_facility = facility.replace("'", "''")  # defense in depth
-        sql = sql.replace("{FACILITY_FILTER}", f"WHERE facility='{safe_facility}' AND {date_clause}")
-        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND facility='{safe_facility}' AND {date_clause}")
+        safe = [f.replace("'", "''") for f in facilities]
+        in_list = ", ".join(f"'{f}'" for f in safe)
+        facility_clause = f"facility IN ({in_list})"
+        sql = sql.replace("{FACILITY_FILTER}", f"WHERE {facility_clause} AND {date_clause}")
+        sql = sql.replace("{AND_FACILITY_FILTER}", f"AND {facility_clause} AND {date_clause}")
     return sql

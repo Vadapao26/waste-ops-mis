@@ -9,6 +9,7 @@ Architecture: this file only orchestrates. Business logic lives in:
   theme.py     — design tokens, global CSS, login page, top-right avatar
 """
 import calendar
+import random
 from datetime import date, timedelta
 
 import bcrypt
@@ -73,7 +74,7 @@ defaults = {
     "clarification_date_from": None, "clarification_date_to": None,
     "explorations": None, "_results": None, "_results_label": None,
     "ctx_locked": False, "ctx_edit_step": None, "ctx_analysis_type": None,
-    "ctx_facility": None, "ctx_timeframe_label": None,
+    "ctx_facilities": [], "ctx_timeframe_label": None,
     "ctx_date_from": None, "ctx_date_to": None, "ctx_num_months": 1,
 }
 for k, v in defaults.items():
@@ -87,8 +88,17 @@ def _cap(key):
 
 
 # ── CONTEXT DERIVATION (single source of truth, defined before ANY rendering) ─
-selected_facility = st.session_state.ctx_facility or "All Facilities"
-facility_selected = bool(st.session_state.ctx_facility) and st.session_state.ctx_locked
+# selected_facility is now a LIST (multi-select) — db.inject_filters/reports
+# functions take lists directly. selected_facility_display is the human-
+# readable string used everywhere else (labels, filenames, chat text).
+selected_facility = st.session_state.ctx_facilities or ["All Facilities"]
+facility_selected = bool(st.session_state.ctx_facilities) and st.session_state.ctx_locked
+if selected_facility == ["All Facilities"]:
+    selected_facility_display = "All Facilities"
+elif len(selected_facility) <= 2:
+    selected_facility_display = ", ".join(selected_facility)
+else:
+    selected_facility_display = f"{len(selected_facility)} facilities"
 date_from = st.session_state.ctx_date_from or ""
 date_to = st.session_state.ctx_date_to or ""
 display_time = st.session_state.ctx_timeframe_label or ""
@@ -105,12 +115,37 @@ YEARS = list(range(2023, TODAY.year + 2))
 
 
 def reset_context():
-    for k in ["ctx_locked", "ctx_edit_step", "ctx_analysis_type", "ctx_facility",
+    for k in ["ctx_locked", "ctx_edit_step", "ctx_analysis_type", "ctx_facilities",
               "ctx_timeframe_label", "ctx_date_from", "ctx_date_to"]:
         st.session_state[k] = defaults[k]
     st.session_state.ctx_num_months = 1
     for k in ["active_clarifications", "explorations", "_results"]:
         st.session_state[k] = None
+
+
+def _tile_grid(options, selected_check, on_click, key_prefix, n_cols=4, all_facilities_tile=None):
+    """Renders a checkerboard-tinted tile grid: alternating indigo/gold,
+    light by default, dark when selected (per option). `selected_check(opt)`
+    returns bool, `on_click(opt)` handles the click (toggle or single-select,
+    caller decides). If all_facilities_tile is given, it's rendered as a
+    separate full-width tile below the grid (matches the design)."""
+    cols = st.columns(n_cols)
+    for i, opt in enumerate(options):
+        color = "indigo" if (i // n_cols + i % n_cols) % 2 == 0 else "gold"
+        with cols[i % n_cols]:
+            with st.container(key=f"tile_{color}_{key_prefix}_{i}"):
+                is_sel = selected_check(opt)
+                if st.button(opt, key=f"{key_prefix}_{opt}", use_container_width=True,
+                             type="primary" if is_sel else "secondary"):
+                    on_click(opt)
+                    st.rerun()
+    if all_facilities_tile is not None:
+        with st.container(key="tile_all"):
+            is_sel = selected_check(all_facilities_tile)
+            if st.button(all_facilities_tile, key=f"{key_prefix}_{all_facilities_tile}", use_container_width=True,
+                         type="primary" if is_sel else "secondary"):
+                on_click(all_facilities_tile)
+                st.rerun()
 
 
 def render_context_builder():
@@ -122,63 +157,83 @@ def render_context_builder():
 
     if show_type:
         st.markdown("**1 · What do you want to analyse?**")
-        with st.container(key="analysis_cards"):
-            type_options = list(ANALYSIS_TYPES.keys())
-            cols = st.columns(4)
-            for i, opt in enumerate(type_options):
-                with cols[i % 4]:
-                    is_selected = st.session_state.ctx_analysis_type == opt
-                    if st.button(opt, key=f"card_{opt}", use_container_width=True,
-                                 type="primary" if is_selected else "secondary"):
-                        st.session_state.ctx_analysis_type = opt
-                        st.rerun()
+        type_options = list(ANALYSIS_TYPES.keys())
+
+        def _type_click(opt):
+            st.session_state.ctx_analysis_type = opt
+        _tile_grid(type_options, lambda o: st.session_state.ctx_analysis_type == o, _type_click, "type")
 
     if show_facility:
-        st.markdown("**2 · Which facility?**")
-        fac_options = [user_facility] if user_role == "manager" else FACILITIES
-        chosen = st.pills("Facility", fac_options, default=st.session_state.ctx_facility,
-                           label_visibility="collapsed", key="pill_facility")
-        if chosen is not None:
-            st.session_state.ctx_facility = chosen
+        st.markdown("**2 · Which facility?** *(pick one or more)*")
+        if user_role == "manager":
+            fac_options = [user_facility]
+            all_tile = None
+        else:
+            fac_options = [f for f in FACILITIES if f != "All Facilities"]
+            all_tile = "All Facilities"
+
+        def _facility_click(opt):
+            current = list(st.session_state.ctx_facilities)
+            if opt == "All Facilities":
+                st.session_state.ctx_facilities = ["All Facilities"] if current != ["All Facilities"] else []
+            else:
+                if "All Facilities" in current:
+                    current = []
+                if opt in current:
+                    current.remove(opt)
+                else:
+                    current.append(opt)
+                st.session_state.ctx_facilities = current
+
+        def _facility_selected(opt):
+            return opt in st.session_state.ctx_facilities
+        _tile_grid(fac_options, _facility_selected, _facility_click, "fac", all_facilities_tile=all_tile)
 
     if show_time:
         st.markdown("**3 · Timeframe**")
-        tf_options = list(TIMEFRAME_PRESETS.keys()) + ["Custom range"]
-        tf_default = st.session_state.ctx_timeframe_label if st.session_state.ctx_timeframe_label in tf_options else None
-        chosen_tf = st.pills("Timeframe", tf_options, default=tf_default, label_visibility="collapsed", key="pill_time")
+        tf_options = list(TIMEFRAME_PRESETS.keys())
 
-        if chosen_tf in TIMEFRAME_PRESETS:
-            days = TIMEFRAME_PRESETS[chosen_tf]
+        def _tf_click(opt):
+            days = TIMEFRAME_PRESETS[opt]
             st.session_state.ctx_date_from = str(TODAY - timedelta(days=days))
             st.session_state.ctx_date_to = str(TODAY)
-            st.session_state.ctx_timeframe_label = chosen_tf
+            st.session_state.ctx_timeframe_label = opt
             st.session_state.ctx_num_months = max(1, round(days / 30))
-            st.caption(f"{st.session_state.ctx_date_from} to {st.session_state.ctx_date_to}")
-        elif chosen_tf == "Custom range":
+            st.session_state["_show_custom_range"] = False
+
+        def _tf_selected(opt):
+            return st.session_state.ctx_timeframe_label == opt and not st.session_state.get("_show_custom_range")
+        _tile_grid(tf_options, _tf_selected, _tf_click, "tf")
+
+        custom_active = st.session_state.get("_show_custom_range", False)
+        if st.button("Custom range" + (" ✓" if custom_active else ""), key="custom_range_toggle",
+                     type="primary" if custom_active else "secondary", use_container_width=True):
+            st.session_state["_show_custom_range"] = not custom_active
+            st.rerun()
+
+        if st.session_state.get("_show_custom_range"):
             c1, c2 = st.columns(2)
             with c1:
-                st.markdown("From")
-                fm = st.selectbox("From Month", [MONTH_PH] + MONTHS_FULL, index=0, key="cr_fm", label_visibility="collapsed")
-                fy_str = st.selectbox("From Year", [YEAR_PH] + YEARS, index=0, key="cr_fy", label_visibility="collapsed")
+                from_date = st.date_input("From", key="cr_from_date", value=None,
+                                           min_value=date(2023, 1, 1), max_value=TODAY)
             with c2:
-                st.markdown("To")
-                tm = st.selectbox("To Month", [MONTH_PH] + MONTHS_FULL, index=0, key="cr_tm", label_visibility="collapsed")
-                ty_str = st.selectbox("To Year", [YEAR_PH] + YEARS, index=0, key="cr_ty", label_visibility="collapsed")
-            if fm != MONTH_PH and tm != MONTH_PH and fy_str != YEAR_PH and ty_str != YEAR_PH:
-                fy_c, ty_c = int(fy_str), int(ty_str)
-                fmn, tmn = int(MONTH_NUM[fm]), int(MONTH_NUM[tm])
-                st.session_state.ctx_date_from = f"{fy_c}-{str(fmn).zfill(2)}-01"
-                last_day = calendar.monthrange(ty_c, tmn)[1]
-                st.session_state.ctx_date_to = f"{ty_c}-{str(tmn).zfill(2)}-{last_day}"
-                st.session_state.ctx_num_months = max(1, (ty_c - fy_c) * 12 + (tmn - fmn) + 1)
-                st.session_state.ctx_timeframe_label = f"{fm} {fy_c} – {tm} {ty_c}"
+                to_date = st.date_input("To", key="cr_to_date", value=None,
+                                         min_value=date(2023, 1, 1), max_value=TODAY)
+            if from_date and to_date and from_date <= to_date:
+                st.session_state.ctx_date_from = str(from_date)
+                st.session_state.ctx_date_to = str(to_date)
+                st.session_state.ctx_num_months = max(1, (to_date.year - from_date.year) * 12 + (to_date.month - from_date.month) + 1)
+                st.session_state.ctx_timeframe_label = f"{from_date.strftime('%d %b %Y')} – {to_date.strftime('%d %b %Y')}"
                 st.caption(f"{st.session_state.ctx_date_from} to {st.session_state.ctx_date_to}")
+            elif from_date and to_date and from_date > to_date:
+                st.caption("⚠️ 'From' date must be before 'To' date.")
 
-    ready = bool(st.session_state.ctx_analysis_type and st.session_state.ctx_facility and st.session_state.ctx_date_from)
-    if st.button("Update selection →" if locked else "Start analysis →", type="primary", disabled=not ready, key="lock_ctx_btn"):
-        st.session_state.ctx_locked = True
-        st.session_state.ctx_edit_step = None
-        st.rerun()
+    ready = bool(st.session_state.ctx_analysis_type and st.session_state.ctx_facilities and st.session_state.ctx_date_from)
+    with st.container(key="run_analysis_btn"):
+        if st.button("Update selection →" if locked else "Start cooking stats →", disabled=not ready, key="lock_ctx_btn"):
+            st.session_state.ctx_locked = True
+            st.session_state.ctx_edit_step = None
+            st.rerun()
     if locked and edit_step and st.button("Cancel", key="cancel_edit_ctx"):
         st.session_state.ctx_edit_step = None
         st.rerun()
@@ -190,7 +245,7 @@ def render_context_bar():
         if st.button(f"🔎  {st.session_state.ctx_analysis_type}  ✎", key="edit_type", use_container_width=True):
             st.session_state.ctx_edit_step = "type"; st.rerun()
     with c2:
-        if st.button(f"📍  {st.session_state.ctx_facility}  ✎", key="edit_facility", use_container_width=True):
+        if st.button(f"📍  {selected_facility_display}  ✎", key="edit_facility", use_container_width=True):
             st.session_state.ctx_edit_step = "facility"; st.rerun()
     with c3:
         if st.button(f"🗓️  {st.session_state.ctx_timeframe_label}  ✎", key="edit_time", use_container_width=True):
@@ -200,7 +255,7 @@ def render_context_bar():
             reset_context(); st.rerun()
     st.markdown(
         f'<p class="ctx-caption">Every question below applies to '
-        f'<b>{st.session_state.ctx_facility} · {st.session_state.ctx_timeframe_label}</b> '
+        f'<b>{selected_facility_display} · {st.session_state.ctx_timeframe_label}</b> '
         f'until you edit a selection above.</p>', unsafe_allow_html=True)
 
 
@@ -222,7 +277,7 @@ def render_type_presets():
             if st.button(f"All {at.split(' ')[0]}", key=f"combined_{at}", use_container_width=True):
                 st.session_state["_action"] = {
                     "type": "combined", "keys": combined_keys,
-                    "label": f"{at} Full Analysis | {st.session_state.ctx_facility} | {st.session_state.ctx_timeframe_label}"
+                    "label": f"{at} Full Analysis | {selected_facility_display} | {st.session_state.ctx_timeframe_label}"
                 }
                 st.session_state["active_clarifications"] = None
                 st.session_state["explorations"] = None
@@ -265,7 +320,7 @@ def run_and_show_single(lib_key, is_kpi):
         st.session_state["_results"] = None
     else:
         st.session_state["_results"] = [(lib_key, sql, df.to_dict("records"), df.columns.tolist(), is_kpi)]
-        st.session_state["_results_label"] = f"{lib_key.title()} | {selected_facility} | {display_time}"
+        st.session_state["_results_label"] = f"{lib_key.title()} | {selected_facility_display} | {display_time}"
 
 
 # ── PAGE: ANALYTICS ───────────────────────────────────────────────────────────
@@ -310,8 +365,10 @@ def analytics_page():
         # Instant download — built from what's already on screen, no re-querying.
         report_label = st.session_state.get("_results_label") or st.session_state.ctx_analysis_type or "Analysis"
         if st.button("📄 Download this as a report (PDF)", key="download_current_report"):
-            with st.spinner("Compiling report..."):
-                pdf_bytes = reports.generate_section_pdf(report_label, panels_for_pdf, selected_facility, display_time)
+            loader = st.empty()
+            theme.render_fun_loader(loader, theme.FUN_PDF_MESSAGES)
+            pdf_bytes = reports.generate_section_pdf(report_label, panels_for_pdf, selected_facility_display, display_time)
+            loader.empty()
             st.download_button(
                 "Save PDF", data=pdf_bytes, key="save_current_report_pdf",
                 file_name=f"{report_label.replace(' ', '_').replace('|', '')[:60]}.pdf", mime="application/pdf",
@@ -322,7 +379,7 @@ def analytics_page():
         with st.chat_message("user"):
             st.write(f"Show me: {pending['choice']}")
         st.session_state.messages.append({"role": "user", "content": f"Show me: {pending['choice']}"})
-        with st.spinner(f"Running: {pending['choice']}..."):
+        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
             llm_response = llm.generate_sql(
                 groq_client, pending["question"], pending["choice"], selected_facility,
                 pending["date_from"], pending["date_to"], original_sql=pending.get("original_sql"))
@@ -344,8 +401,8 @@ def analytics_page():
                     # rendering once inline — this is what lets the panel survive a
                     # later rerun, e.g. changing the chart type dropdown.
                     st.session_state["_results"] = [("clarification_result", sql, df.to_dict("records"), df.columns.tolist(), False)]
-                    st.session_state["_results_label"] = f"{pending['choice']} | {selected_facility} | {display_time}"
-                    with st.spinner("Generating exploration suggestions..."):
+                    st.session_state["_results_label"] = f"{pending['choice']} | {selected_facility_display} | {display_time}"
+                    with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
                         st.session_state.explorations = llm.get_suggestions(
                             groq_client, "explore", pending["question"], selected_facility,
                             pending["date_from"], pending["date_to"], df_columns=df.columns)
@@ -375,7 +432,7 @@ def analytics_page():
         d_to = st.session_state.get("clarification_date_to", date_to)
         st.markdown("---")
         st.markdown("**How would you like to see this data?**")
-        st.caption(f"Date: {d_from} to {d_to} | {selected_facility}")
+        st.caption(f"Date: {d_from} to {d_to} | {selected_facility_display}")
         cols = st.columns(min(len(clarifications), 4))
         for i, c in enumerate(clarifications[:4]):
             with cols[i]:
@@ -393,7 +450,7 @@ def analytics_page():
 
         date_override_from, date_override_to = nlp_dates.parse_relative_dates(question, date_from, date_to)
 
-        with st.spinner("Understanding your question..."):
+        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
             clarifications = llm.get_suggestions(groq_client, "clarify", question, selected_facility,
                                                   date_override_from, date_override_to)
 
@@ -406,7 +463,7 @@ def analytics_page():
             st.session_state["clarification_date_to"] = date_override_to
             st.rerun()
         else:
-            with st.spinner("Analysing with Groq AI..."):
+            with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
                 llm_response = llm.generate_sql(groq_client, question, "", selected_facility, date_override_from, date_override_to)
                 sql = results.extract_sql(llm_response)
                 if sql:
@@ -422,10 +479,10 @@ def analytics_page():
                         st.session_state.messages.append({"role": "assistant", "content": msg})
                         _cap("messages")
                         st.session_state["_results"] = [("custom_query", sql, df.to_dict("records"), df.columns.tolist(), False)]
-                        st.session_state["_results_label"] = f"{question} | {selected_facility} | {display_time}"
+                        st.session_state["_results_label"] = f"{question} | {selected_facility_display} | {display_time}"
                         st.session_state["_last_sql"] = sql
                         st.session_state["_last_question"] = question
-                        with st.spinner("Generating exploration suggestions..."):
+                        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
                             st.session_state.explorations = llm.get_suggestions(
                                 groq_client, "explore", question, selected_facility,
                                 date_override_from, date_override_to, df_columns=df.columns)
@@ -448,22 +505,24 @@ def reports_page():
 
     st.markdown(
         f'<p class="ctx-caption">Reports use the context set on the Analytics page: '
-        f'<b>{selected_facility} · {display_time}</b>.</p>', unsafe_allow_html=True)
+        f'<b>{selected_facility_display} · {display_time}</b>.</p>', unsafe_allow_html=True)
 
     st.caption("Pick only the analysis types you need — each one takes time to compile, so smaller is faster.")
     chosen_types = st.multiselect("Analysis types to include", list(ANALYSIS_TYPE_COMBINED.keys()))
 
     if st.button("Generate PDF report", type="primary", disabled=not chosen_types):
-        with st.spinner(f"Compiling {len(chosen_types)} analysis type(s) into your report..."):
-            pdf_bytes = reports.generate_selected_types_pdf(
-                chosen_types, selected_facility, date_from, date_to, display_time, SUPABASE_URL)
+        loader = st.empty()
+        theme.render_fun_loader(loader, theme.FUN_PDF_MESSAGES)
+        pdf_bytes = reports.generate_selected_types_pdf(
+            chosen_types, selected_facility, selected_facility_display, date_from, date_to, display_time, SUPABASE_URL)
+        loader.empty()
         st.session_state["_report_pdf"] = pdf_bytes
         st.success("Report ready.")
 
     if st.session_state.get("_report_pdf"):
         st.download_button(
             "Download report PDF", data=st.session_state["_report_pdf"],
-            file_name=f"waste_ops_report_{selected_facility.replace(' ', '_')}_{date_from}_{date_to}.pdf",
+            file_name=f"waste_ops_report_{selected_facility_display.replace(' ', '_')}_{date_from}_{date_to}.pdf",
             mime="application/pdf", type="primary",
         )
 

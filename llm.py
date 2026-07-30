@@ -70,9 +70,28 @@ def _load_db_context_raw() -> dict:
         return {}
 
 
-def get_db_context(facility: str = "All Facilities") -> str:
+def _normalize_facilities(facility):
+    """Accepts either a single facility string (backward compatible) or a
+    list (multi-select). Returns (facilities_list, display_string, is_all)."""
+    if isinstance(facility, str):
+        facilities = [facility]
+    else:
+        facilities = list(facility) if facility else ["All Facilities"]
+    is_all = facilities == ["All Facilities"]
+    if is_all:
+        display = "All Facilities"
+    elif len(facilities) <= 2:
+        display = ", ".join(facilities)
+    else:
+        display = f"{len(facilities)} facilities"
+    return facilities, display, is_all
+
+
+def get_db_context(facility="All Facilities") -> str:
     """Builds the facility-specific domain context block. The underlying JSON
-    is cached (see above); only this cheap string formatting runs per-call."""
+    is cached (see above); only this cheap string formatting runs per-call.
+    Accepts a single facility name or a list (multi-select) — loads context
+    for every selected facility, not just one."""
     ctx = _load_db_context_raw()
     if not ctx:
         return ""
@@ -90,7 +109,8 @@ def get_db_context(facility: str = "All Facilities") -> str:
         for rule in g.get("sql_rules", []):
             lines.append(f"  - {rule}")
 
-    facilities = [k for k in ctx.keys() if not k.startswith("_")] if facility == "All Facilities" else [facility]
+    facilities_list, _, is_all = _normalize_facilities(facility)
+    facilities = [k for k in ctx.keys() if not k.startswith("_")] if is_all else facilities_list
     for f in facilities:
         if f not in ctx:
             continue
@@ -130,10 +150,12 @@ def _call_groq(client: Groq, prompt: str, system: str = None, temperature: float
     return response.choices[0].message.content
 
 
-def get_suggestions(client: Groq, mode: str, question: str, facility: str, date_from: str, date_to: str,
+def get_suggestions(client: Groq, mode: str, question: str, facility, date_from: str, date_to: str,
                      df_columns=None) -> list:
     """Replaces the old get_clarifications/get_explorations pair.
-    mode: 'clarify' (before running a query) or 'explore' (after, based on results)."""
+    mode: 'clarify' (before running a query) or 'explore' (after, based on results).
+    `facility` accepts a single name or a list (multi-select)."""
+    _, facility_display, _ = _normalize_facilities(facility)
     db_context = get_db_context(facility)
     conv_context = get_conversation_context()
 
@@ -141,7 +163,7 @@ def get_suggestions(client: Groq, mode: str, question: str, facility: str, date_
         prompt = f"""You are a waste operations data analyst assistant.
 {conv_context}
 User question: "{question}"
-Facility: {facility} | Date range: {date_from} to {date_to}
+Facility: {facility_display} | Date range: {date_from} to {date_to}
 {db_context}
 {SCHEMA_CONTEXT}
 
@@ -163,7 +185,7 @@ No other text, no markdown, no explanation."""
         prompt = f"""Waste management analyst.
 {conv_context}
 User asked: "{question}", result columns: {cols}
-Facility: {facility}
+Facility: {facility_display}
 {db_context}
 
 Generate 4-5 specific follow-up exploration options based on this result.
@@ -178,13 +200,17 @@ Return ONLY a JSON array with "label" and "description" keys. No other text."""
         return []
 
 
-def generate_sql(client: Groq, question: str, clarification: str, facility: str, date_from: str, date_to: str,
+def generate_sql(client: Groq, question: str, clarification: str, facility, date_from: str, date_to: str,
                   original_sql: str = None) -> str:
     """Replaces the old ask_groq_sql/ask_llm pair — same prompt shape either way,
-    clarification is optional (empty string for a direct free-text question)."""
-    if facility != "All Facilities":
-        fclause = f"WHERE facility='{facility}' AND date>='{date_from}' AND date<='{date_to}'"
-        fnote = f"Filter by facility='{facility}'"
+    clarification is optional (empty string for a direct free-text question).
+    `facility` accepts a single name or a list (multi-select)."""
+    facilities_list, facility_display, is_all = _normalize_facilities(facility)
+    if not is_all:
+        safe = [f.replace("'", "''") for f in facilities_list]
+        in_list = ", ".join(f"'{f}'" for f in safe)
+        fclause = f"WHERE facility IN ({in_list}) AND date>='{date_from}' AND date<='{date_to}'"
+        fnote = f"Filter by facility IN ({in_list})"
     else:
         fclause = f"WHERE date>='{date_from}' AND date<='{date_to}'"
         fnote = "No facility filter. Include facility in SELECT."
