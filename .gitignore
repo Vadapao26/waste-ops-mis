@@ -10,3 +10,5 @@ venv/
 .vscode/
 .idea/
 credentials.json
+.streamlit/
+credentials.json
