@@ -29,11 +29,18 @@ NOTE: NO destination column. Use facility for facility name.
 
 TABLE: production — processing runs
 COLUMNS: production_code, date, facility, shift (Day/Night/General),
-process_equipment, material_quantity (output kg), no_of_staff_present, time_taken_in_hrs
+process_equipment (Conveyor 1/Conveyor 2/Vertical Baler/Horizontal Baler/etc — the physical
+machine used; process stage like Sorting/Bagging/Bailing/Shredding must be inferred from this
+column's text, e.g. LOWER(process_equipment) LIKE '%sort%' — there is NO separate 'process' column),
+material_quantity (output kg, numeric), no_of_staff_present, time_taken_in_hrs,
+total_rejection_in_kg, material, materials, material_from, quantity_in_kg (text — likely a
+per-material output figure, not yet confirmed how it relates to material_quantity; ask before
+relying on it for a material breakdown)
 
 TABLE: outward — material dispatched to customers
 COLUMNS: outward_code, date, facility, customer, destination, vendor_type, authorisation,
-material, outward_material_category, dispatched_quantity, accepted_quantity, rejected_quantity,
+material, outward_material_category, rate (price per unit for that material),
+dispatched_quantity, accepted_quantity, rejected_quantity,
 value_of_accepted_material, net_material_sales_cost, total_incentive_cost, transportation_cost,
 loading_cost, additional_transport_cost
 

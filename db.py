@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, text
 # once that's done, this function (and this whole file's need for it) goes away.
 TEXT_NUMERIC_COLS = [
     'value_of_accepted_material', 'net_procurement_cost', 'transportation_cost',
-    'loading_cost', 'additional_cost', 'net_material_sales_cost',
+    'loading_cost', 'additional_cost', 'additional_transport_cost', 'net_material_sales_cost',
     'total_incentive_cost', 'rate', 'amount', 'bill_amount',
     'value_of_material', 'incentive',
 ]
@@ -147,3 +147,12 @@ def inject_filters(sql: str, facilities, date_from: str, date_to: str) -> str:
         sql = sql.replace("{FACILITY_FILTER}", f"WHERE {facility_clause} AND {date_clause}")
         sql = sql.replace("{AND_FACILITY_FILTER}", f"AND {facility_clause} AND {date_clause}")
     return sql
+
+
+def inject_vendor_filter(sql: str, vendor: str) -> str:
+    """Fills in {AND_VENDOR_FILTER} for the single-vendor drill-down queries
+    (BWG/ULB analytics). Same defense-in-depth quote-escaping as inject_filters."""
+    if not vendor:
+        return sql.replace("{AND_VENDOR_FILTER}", "")
+    safe_vendor = vendor.replace("'", "''")
+    return sql.replace("{AND_VENDOR_FILTER}", f"AND received_material_from = '{safe_vendor}'")

@@ -52,6 +52,8 @@ SHEETS = {
     "Mayasandra":  "13yjQc6t3Vuhlr5UqbWXks-EFnrfWW1eJ2MCe1gezrCE",
     "Bommasandra": "1LrY9ClFEdDDknc5N9DRi6NlmCWOhm_1_uuf__nVqaVg",
     "Attibele":    "1-yelqRAIhS51Etic4eLrwo4lSLSs0nqbM2SPXhCGxVQ",
+    "Trading Data RPG/External Transfers- SCM (MRF)": "1M3hERqCou1dDkeUCEynimECXkIw2V0f7SVOeIaHN34I",
+    "Interim PRF (Sarvam Jigani)": "1q9lpAv2SvGaNeHpycgwsoaFhn1byxET7CxXt1_I2yCQ",
 }
 
 TABLES = ["inward", "outward", "production", "expense", "revenue", "training", "training_attendees"]
@@ -97,6 +99,12 @@ def load_facility(client, facility, sheet_id):
                 time.sleep(3)
     except Exception as e:
         print(f"  ⚠️  Could not connect to {facility}: {e}")
+        # Re-raise so sync()'s existing failed_facilities check actually
+        # catches this and aborts the write, instead of silently treating
+        # a connection failure the same as "this facility has no data" —
+        # the latter is what caused inward/production to get overwritten
+        # with Jigani missing, with no error surfaced, in a real run.
+        raise
     return result
 
 # ── DATA CLEANING ─────────────────────────────────────────────────────────────
@@ -278,7 +286,7 @@ def sync():
         print("     overwrite every facility's data with only whatever had loaded so far.)")
         return
 
-    print("\n💾 Writing to Supabase...")
+    print("\n🔎 Validating before write...")
     datasets = {
         "inward":     all_inward,
         "production": all_production,
@@ -287,13 +295,37 @@ def sync():
         "revenue":    all_revenue,
     }
 
+    # Concatenate everything FIRST, before writing anything — a duplicate-
+    # column problem (or any other concat failure) in one table used to
+    # leave earlier tables already written and later tables untouched,
+    # which is exactly the inconsistent state that caused this bug report.
+    # All-or-nothing: either every table concatenates cleanly and all five
+    # get written, or none of them do.
+    concatenated = {}
     for table, dfs in datasets.items():
-        if dfs:
-            df = pd.concat(dfs, ignore_index=True)
-            df.to_sql(table, engine, if_exists="replace", index=False,
-                      chunksize=500, method="multi")
-            print(f"  ✅ {table}: {len(df)} rows written")
-        else:
+        if not dfs:
+            continue
+        for df in dfs:
+            dup_cols = df.columns[df.columns.duplicated()].unique().tolist()
+            if dup_cols:
+                facility_label = df["facility"].iloc[0] if "facility" in df.columns and len(df) else "unknown facility"
+                print(f"\n❌ Duplicate column(s) {dup_cols} in {table} data for '{facility_label}' "
+                      f"after cleaning.")
+                print(f"   Likely two raw header names in that sheet's {table.title()} tab that both "
+                      f"cleaned down to the same canonical name (check for a blank, renamed, or near-"
+                      f"duplicate column header).")
+                print("⚠️  ABORTING WRITE — refusing to write any table until this is fixed, so inward/")
+                print("    production/outward/expense/revenue stay consistent with each other.")
+                return
+        concatenated[table] = pd.concat(dfs, ignore_index=True)
+
+    print("\n💾 Writing to Supabase...")
+    for table, df in concatenated.items():
+        df.to_sql(table, engine, if_exists="replace", index=False,
+                  chunksize=500, method="multi")
+        print(f"  ✅ {table}: {len(df)} rows written")
+    for table, dfs in datasets.items():
+        if not dfs:
             print(f"  ⚠️  {table}: no data")
 
     # Training tables
@@ -304,13 +336,24 @@ def sync():
             all_training_attendees.append(process_training_attendees(data["Training"], facility))
 
     for table, dfs in [("training", all_training), ("training_attendees", all_training_attendees)]:
-        if dfs:
-            df = pd.concat(dfs, ignore_index=True)
-            df.to_sql(table, engine, if_exists="replace", index=False,
-                      chunksize=500, method="multi")
-            print(f"  ✅ {table}: {len(df)} rows written")
-        else:
+        if not dfs:
             print(f"  ⚠️  {table}: no data")
+            continue
+        dup_found = False
+        for df in dfs:
+            dup_cols = df.columns[df.columns.duplicated()].unique().tolist()
+            if dup_cols:
+                facility_label = df["facility"].iloc[0] if "facility" in df.columns and len(df) else "unknown facility"
+                print(f"\n❌ Duplicate column(s) {dup_cols} in {table} data for '{facility_label}'.")
+                print(f"⚠️  Skipping {table} write — other tables already written this run are unaffected.")
+                dup_found = True
+                break
+        if dup_found:
+            continue
+        df = pd.concat(dfs, ignore_index=True)
+        df.to_sql(table, engine, if_exists="replace", index=False,
+                  chunksize=500, method="multi")
+        print(f"  ✅ {table}: {len(df)} rows written")
 
     print("\n✅ Sync complete!")
 
