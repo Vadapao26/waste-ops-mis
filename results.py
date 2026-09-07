@@ -178,6 +178,22 @@ def auto_chart(df, uid):
                 key=f"color_{uid}")
             color_col = None if color_col == "None" else color_col
 
+    # Filter by whatever's currently on the X axis — lets you narrow a
+    # "Vendor" chart down to just a couple of vendors for comparison, a
+    # "Material" chart down to specific materials, etc. Only offered when
+    # X axis is a text/category column (filtering individual numeric
+    # values, e.g. on a currency column, isn't a meaningful use case) and
+    # has more than one distinct value to narrow down.
+    if not pd.api.types.is_numeric_dtype(chart_df[x_axis]) and chart_df[x_axis].nunique() > 1:
+        x_values = sorted(chart_df[x_axis].dropna().unique().tolist())
+        chosen_x = st.multiselect(f"Filter by {x_axis.replace('_',' ').title()}", x_values,
+                                   default=x_values, key=f"xfilter_{x_axis}_{uid}")
+        if chosen_x and len(chosen_x) < len(x_values):
+            chart_df = chart_df[chart_df[x_axis].isin(chosen_x)]
+            if len(chart_df) < 2:
+                st.caption("Select at least 2 values to show a chart.")
+                return
+
     # Build chart
     title = f"{y_axis.replace('_',' ').title()} by {x_axis.replace('_',' ').title()}"
     plot_df = chart_df.sort_values(x_axis)
@@ -185,7 +201,7 @@ def auto_chart(df, uid):
     # Long entity names (full vendor names, addresses) crowd axis labels and
     # legends — truncate for display only, full name still shows on hover via
     # the original column, which is passed through in hover_data.
-    truncate_cols = [c for c in (x_axis, color_col) if c and plot_df[c].dtype == object]
+    truncate_cols = [c for c in (x_axis, color_col) if c and not pd.api.types.is_numeric_dtype(plot_df[c])]
     for c in truncate_cols:
         display_col = f"__{c}_short"
         plot_df[display_col] = plot_df[c].apply(_truncate_label)

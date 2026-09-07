@@ -28,7 +28,7 @@ from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_G
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-09-04-bigquery-migration-phase3"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-07-remove-bwg-analytics"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -59,11 +59,10 @@ user_facility = user_info["facility"]
 user_name = user_info["name"]
 
 # BigQuery project/dataset + credentials, all from st.secrets — same
-# consistent pattern already used for the Groq API key below. Unlike
-# sync_to_bigquery.py (which runs as a plain script and needs a local
-# credentials.json fallback), app.py always runs via Streamlit, so
-# st.secrets is always populated — locally from .streamlit/secrets.toml,
-# or on Streamlit Cloud from the Secrets UI (never committed to the repo).
+# consistent pattern already used for the Groq API key below. app.py
+# always runs via Streamlit, so st.secrets is always populated —
+# locally from .streamlit/secrets.toml, or on Streamlit Cloud/Cloud Run
+# from wherever secrets are provisioned there.
 BQ_PROJECT_ID = st.secrets["bigquery"]["project_id"]
 BQ_DATASET = st.secrets["bigquery"]["dataset"]
 BQ_CLIENT_AND_DATASET = db.get_client(BQ_PROJECT_ID, BQ_DATASET, _creds_dict=dict(st.secrets["bigquery"]["credentials"]))
@@ -160,30 +159,55 @@ def reset_context():
         st.session_state[k] = None
 
 
-def _tile_grid(options, selected_check, on_click, key_prefix, n_cols=4, all_facilities_tile=None):
-    """Renders a checkerboard-tinted, flex-wrap tile row: alternating indigo/
-    gold, light by default, dark when selected (per option). Buttons size to
-    their own text (plus padding) rather than stretching into equal-width
-    columns, and wrap to the next line as needed. `selected_check(opt)`
-    returns bool, `on_click(opt)` handles the click (toggle or single-select,
-    caller decides). If all_facilities_tile is given, it's rendered as a
-    separate tile below the row (matches the design)."""
-    with st.container(key=f"tile_flexwrap_{key_prefix}"):
-        for i, opt in enumerate(options):
-            color = "indigo" if (i // n_cols + i % n_cols) % 2 == 0 else "gold"
-            with st.container(key=f"tile_{color}_{key_prefix}_{i}"):
+# ── Facility icon mapping — standard processing facilities get a building
+# icon; the two trading/transfer entries (not physical processing sites)
+# get a distinct icon so their different nature is visible at a glance. ────
+_FACILITY_ICONS = {
+    "All Facilities": "🏭",
+    "Trading Data RPG/External Transfers- SCM (MRF)": "🔄",
+    "Interim PRF (Sarvam Jigani)": "🔄",
+}
+
+
+def _facility_card_grid(options, selected_check, on_click, all_facilities_tile=None, n_cols=4):
+    """M3 selectable-card grid for facility picking. True st.columns grid
+    (uniform-width cards) rather than flex-wrap chips. Selected cards get
+    the M3 primary fill plus a leading checkmark; unselected cards stay on
+    surface-container-low. Icon is a plain-text emoji prefix in the button
+    label, since Streamlit buttons don't render arbitrary HTML."""
+    all_options = list(options)
+    if all_facilities_tile is not None:
+        all_options = [all_facilities_tile] + all_options
+    with st.container(key="facility_card_grid"):
+        rows = [all_options[i:i + n_cols] for i in range(0, len(all_options), n_cols)]
+        for row in rows:
+            cols = st.columns(n_cols)
+            for col, opt in zip(cols, row):
+                with col:
+                    icon = _FACILITY_ICONS.get(opt, "🏢")
+                    is_sel = selected_check(opt)
+                    label = f"✓ {icon}  {opt}" if is_sel else f"{icon}  {opt}"
+                    if st.button(label, key=f"fac_card_{opt}", use_container_width=True,
+                                 type="primary" if is_sel else "secondary"):
+                        on_click(opt)
+                        st.rerun()
+
+
+def _timeframe_segmented_bar(options, selected_check, on_click):
+    """M3 segmented-button bar for timeframe picking — a single connected
+    row (shared border, only end buttons rounded) rather than separate
+    pill chips. Visual connection is done in CSS (see .st-key-timeframe_
+    segmented_bar in theme.py); this just renders plain buttons in a row
+    with the right container key for that CSS to target."""
+    with st.container(key="timeframe_segmented_bar"):
+        cols = st.columns(len(options))
+        for col, opt in zip(cols, options):
+            with col:
                 is_sel = selected_check(opt)
-                if st.button(opt, key=f"{key_prefix}_{opt}",
+                if st.button(opt, key=f"tf_seg_{opt}", use_container_width=True,
                              type="primary" if is_sel else "secondary"):
                     on_click(opt)
                     st.rerun()
-    if all_facilities_tile is not None:
-        with st.container(key="tile_all"):
-            is_sel = selected_check(all_facilities_tile)
-            if st.button(all_facilities_tile, key=f"{key_prefix}_{all_facilities_tile}", use_container_width=True,
-                         type="primary" if is_sel else "secondary"):
-                on_click(all_facilities_tile)
-                st.rerun()
 
 
 def render_context_builder():
@@ -216,7 +240,7 @@ def render_context_builder():
 
         def _facility_selected(opt):
             return opt in st.session_state.ctx_facilities
-        _tile_grid(fac_options, _facility_selected, _facility_click, "fac", all_facilities_tile=all_tile)
+        _facility_card_grid(fac_options, _facility_selected, _facility_click, all_facilities_tile=all_tile)
 
     if show_time:
         st.markdown("**2 · Timeframe**")
@@ -232,7 +256,7 @@ def render_context_builder():
 
         def _tf_selected(opt):
             return st.session_state.ctx_timeframe_label == opt and not st.session_state.get("_show_custom_range")
-        _tile_grid(tf_options, _tf_selected, _tf_click, "tf")
+        _timeframe_segmented_bar(tf_options, _tf_selected, _tf_click)
 
         custom_active = st.session_state.get("_show_custom_range", False)
         with st.container(key="tile_custom_range"):
@@ -271,7 +295,7 @@ def render_context_builder():
 
 TYPE_ICONS = {
     "Inward Analytics": "📥", "Production Analytics": "⚙️", "Outward Analytics": "📤",
-    "Transport Analytics": "🚚", "ULB Analytics": "🏛️", "BWG Analytics": "🏢",
+    "Transport Analytics": "🚚", "ULB Analytics": "🏛️",
     "Training Analytics": "🎓", "Environmental Impact": "🌱", "Supply Chain Analytics": "🔗",
     "Custom AI Query": "💬",
 }
@@ -281,7 +305,7 @@ TYPE_ICONS = {
 # listed here just won't be grouped (shouldn't happen, but never hides a type).
 SIDEBAR_GROUP_ORDER = [
     ("Material Flow", ["Inward Analytics", "Production Analytics", "Outward Analytics", "Transport Analytics"]),
-    ("Programs", ["ULB Analytics", "BWG Analytics", "Training Analytics"]),
+    ("Programs", ["ULB Analytics", "Training Analytics"]),
     ("Impact & Tools", ["Environmental Impact", "Supply Chain Analytics", "Custom AI Query"]),
 ]
 
@@ -297,78 +321,73 @@ def _default_sub_key(opt):
 
 
 def render_analysis_sidebar():
-    """Persistent sidebar tree for picking the analysis type — replaces the old
-    step-1 tile grid. The active type expands to show its presets as nested
-    sub-items (collapsible: only the active one is expanded at a time),
-    matching the approved mockup's tree behavior. Facility/timeframe
-    selection is unaffected by this; switching analysis type here just
-    clears stale results so nothing from a previous type lingers on screen."""
+    """App-drawer tile grid — replaces the icon-rail + panel layout from the
+    previous pass, which read as confusing in practice. Top-level categories
+    render as a 3-column grid of icon tiles; the active category's
+    sub-items list directly below the grid (not in a separate side panel).
+    Same click/state logic as before — clicking a tile switches the active
+    analysis type and lands on its default sub-view, or shows the full
+    sub-item list below if it's already active."""
     st.sidebar.markdown("### 🗑️ Wise Waste")
     st.sidebar.caption("Analytics")
     grouped_types = {t for _, types in SIDEBAR_GROUP_ORDER for t in types}
     ungrouped = [t for t in ANALYSIS_TYPES.keys() if t not in grouped_types]
     all_groups = SIDEBAR_GROUP_ORDER + ([("Other", ungrouped)] if ungrouped else [])
+    all_types_in_order = [t for _, types in all_groups for t in types]
 
-    for group_label, types_in_group in all_groups:
-        st.sidebar.markdown(
-            f'<div style="font-size:10.5px;color:{theme.PALETTE["muted"]};'
-            f'text-transform:uppercase;letter-spacing:.06em;margin:12px 0 4px 4px;">{group_label}</div>',
-            unsafe_allow_html=True)
-        for opt in types_in_group:
-            is_active = st.session_state.ctx_analysis_type == opt
-            # ctx_sidebar_expanded starts as None (nothing explicitly toggled
-            # yet) — in that state, the active type shows expanded by default.
-            # "__collapsed__" is an explicit sentinel meaning "user collapsed
-            # whatever was open," distinct from "hasn't touched it yet."
-            if st.session_state.ctx_sidebar_expanded is None:
-                is_expanded = is_active
-            else:
-                is_expanded = st.session_state.ctx_sidebar_expanded == opt
+    with st.sidebar.container(key="nav_tile_grid"):
+        n_cols = 3
+        rows = [all_types_in_order[i:i + n_cols] for i in range(0, len(all_types_in_order), n_cols)]
+        for row in rows:
+            cols = st.columns(n_cols)
+            for col, opt in zip(cols, row):
+                with col:
+                    is_active = st.session_state.ctx_analysis_type == opt
+                    icon = TYPE_ICONS.get(opt, "•")
+                    short_label = opt.replace(" Analytics", "").replace(" Impact", "")
+                    label = f"{icon}\n{short_label}"
+                    if st.button(label, key=f"tile_type_{opt}", use_container_width=True,
+                                 type="primary" if is_active else "secondary"):
+                        if opt != st.session_state.ctx_analysis_type:
+                            st.session_state.ctx_analysis_type = opt
+                            st.session_state["_ghg_result"] = None
+                            st.session_state["active_clarifications"] = None
+                            st.session_state["explorations"] = None
+                            default_key = _default_sub_key(opt)
+                            if default_key:
+                                st.session_state["_action"] = {"type": "library", "key": default_key, "is_kpi": "kpi" in default_key}
+                            else:
+                                st.session_state["_results"] = None
+                        st.rerun()
+
+    with st.sidebar.container(key="nav_sub_panel"):
+        opt = st.session_state.ctx_analysis_type
+        if opt and (ANALYSIS_TYPES.get(opt) or ANALYSIS_TYPE_COMBINED.get(opt)):
             icon = TYPE_ICONS.get(opt, "")
-            has_children = bool(ANALYSIS_TYPES[opt] or ANALYSIS_TYPE_COMBINED.get(opt))
-            chevron = ("▾ " if is_expanded else "▸ ") if has_children else ""
-            if st.sidebar.button(f"{chevron}{icon}  {opt}".strip(), key=f"sidebar_type_{opt}", use_container_width=True,
-                                  type="primary" if is_active else "secondary"):
-                if is_expanded:
-                    # Already expanded — collapse the tree only, leave whatever
-                    # content is currently showing untouched.
-                    st.session_state.ctx_sidebar_expanded = "__collapsed__"
-                    st.rerun()
-                else:
-                    st.session_state.ctx_sidebar_expanded = opt
-                    if opt != st.session_state.ctx_analysis_type:
-                        st.session_state.ctx_analysis_type = opt
-                        st.session_state["_ghg_result"] = None
+            st.markdown(f'<div class="nav-panel-title">{icon}&nbsp;&nbsp;{opt}</div>', unsafe_allow_html=True)
+            combined_keys = ANALYSIS_TYPE_COMBINED.get(opt)
+            if combined_keys:
+                with st.container(key=f"sidebar_sub_wrap_{opt}_all"):
+                    if st.button(f"All {opt.split(' ')[0]}", key=f"sidebar_sub_{opt}_all", use_container_width=True):
+                        st.session_state["_action"] = {
+                            "type": "combined", "keys": combined_keys,
+                            "label": f"{opt} Full Analysis | {selected_facility_display} | {st.session_state.ctx_timeframe_label}"
+                        }
                         st.session_state["active_clarifications"] = None
                         st.session_state["explorations"] = None
-                        default_key = _default_sub_key(opt)
-                        if default_key:
-                            # Land on the natural default view immediately, instead
-                            # of a blank panel until a sub-item is clicked too.
-                            st.session_state["_action"] = {"type": "library", "key": default_key, "is_kpi": "kpi" in default_key}
-                        else:
-                            st.session_state["_results"] = None
-                    st.rerun()
-            if is_expanded and (ANALYSIS_TYPES[opt] or ANALYSIS_TYPE_COMBINED.get(opt)):
-                combined_keys = ANALYSIS_TYPE_COMBINED.get(opt)
-                if combined_keys:
-                    with st.sidebar.container(key=f"sidebar_sub_wrap_{opt}_all"):
-                        if st.button(f"All {opt.split(' ')[0]}", key=f"sidebar_sub_{opt}_all", use_container_width=True):
-                            st.session_state["_action"] = {
-                                "type": "combined", "keys": combined_keys,
-                                "label": f"{opt} Full Analysis | {selected_facility_display} | {st.session_state.ctx_timeframe_label}"
-                            }
-                            st.session_state["active_clarifications"] = None
-                            st.session_state["explorations"] = None
-                            st.rerun()
-                for key in ANALYSIS_TYPES[opt]:
-                    sub_label = key.split(": ")[1].title() if ": " in key else key.title()
-                    with st.sidebar.container(key=f"sidebar_sub_wrap_{opt}_{key}"):
-                        if st.button(sub_label, key=f"sidebar_sub_{opt}_{key}", use_container_width=True):
-                            st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
-                            st.session_state["active_clarifications"] = None
-                            st.session_state["explorations"] = None
-                            st.rerun()
+                        st.rerun()
+            for key in ANALYSIS_TYPES.get(opt) or []:
+                sub_label = key.split(": ")[1].title() if ": " in key else key.title()
+                with st.container(key=f"sidebar_sub_wrap_{opt}_{key}"):
+                    if st.button(sub_label, key=f"sidebar_sub_{opt}_{key}", use_container_width=True):
+                        st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
+                        st.session_state["active_clarifications"] = None
+                        st.session_state["explorations"] = None
+                        st.rerun()
+        else:
+            icon = TYPE_ICONS.get(opt, "💬")
+            st.markdown(f'<div class="nav-panel-title">{icon}&nbsp;&nbsp;{opt}</div>', unsafe_allow_html=True)
+            st.caption("Ask your question in the chat box below.")
 
     # Visible build marker — bump BUILD_TAG whenever files are handed off, so
     # a glance at the sidebar footer proves which version is actually running
@@ -376,7 +395,6 @@ def render_analysis_sidebar():
     st.sidebar.markdown(
         f'<div style="position:fixed;bottom:10px;left:14px;font-size:10px;'
         f'color:{theme.PALETTE["muted"]};">build {BUILD_TAG}</div>', unsafe_allow_html=True)
-
 
 def render_context_bar():
     c1, c2, c3, _spacer = st.columns([1.6, 1.6, 0.7, 4])
@@ -417,48 +435,6 @@ def render_type_presets():
         else:
             st.caption("🚚 Transport GHG Emissions is available for MRF only so far — "
                        "distance data for other facilities hasn't been loaded yet.")
-
-    if at == "BWG Analytics":
-        st.divider()
-        st.caption("Analyze one BWG vendor at a time, rather than all of them combined.")
-        vendor_list_sql = db.inject_filters(QUERY_LIBRARY["bwg: vendor list"], selected_facility, date_from, date_to)
-        vendor_df, verr = db.run_query(vendor_list_sql, BQ_CLIENT_AND_DATASET)
-        if verr:
-            st.error(f"Couldn't load the BWG vendor list: {verr}")
-        elif vendor_df is None or vendor_df.empty:
-            st.info("No BWG vendors found for this facility/timeframe.")
-        else:
-            vendor_options = vendor_df["vendor"].dropna().unique().tolist()
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                chosen_vendor = st.selectbox("BWG vendor", vendor_options, key="bwg_vendor_picker", label_visibility="collapsed")
-            with c2:
-                if st.button("Analyze this vendor", key="bwg_analyze_btn", use_container_width=True):
-                    st.session_state["_action"] = {"type": "bwg_drill", "vendor": chosen_vendor}
-                    st.session_state["active_clarifications"] = None
-                    st.session_state["explorations"] = None
-                    st.rerun()
-
-    if at == "ULB Analytics":
-        st.divider()
-        st.caption("Analyze one ULB vendor at a time, rather than all of them combined.")
-        vendor_list_sql = db.inject_filters(QUERY_LIBRARY["ulb: vendor list"], selected_facility, date_from, date_to)
-        vendor_df, verr = db.run_query(vendor_list_sql, BQ_CLIENT_AND_DATASET)
-        if verr:
-            st.error(f"Couldn't load the ULB vendor list: {verr}")
-        elif vendor_df is None or vendor_df.empty:
-            st.info("No ULB vendors found for this facility/timeframe.")
-        else:
-            vendor_options = vendor_df["vendor"].dropna().unique().tolist()
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                chosen_vendor = st.selectbox("ULB vendor", vendor_options, key="ulb_vendor_picker", label_visibility="collapsed")
-            with c2:
-                if st.button("Analyze this vendor", key="ulb_analyze_btn", use_container_width=True):
-                    st.session_state["_action"] = {"type": "ulb_drill", "vendor": chosen_vendor}
-                    st.session_state["active_clarifications"] = None
-                    st.session_state["explorations"] = None
-                    st.rerun()
 
 
 # ── ACTION DISPATCHER HELPERS ─────────────────────────────────────────────────
@@ -600,50 +576,6 @@ def analytics_page():
         with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
             st.session_state["_ghg_result"] = ghg.calculate_transport_emissions(
                 BQ_CLIENT_AND_DATASET, action["facility"], date_from, date_to)
-    elif action and action.get("type") == "bwg_drill":
-        st.session_state["_ghg_result"] = None
-        vendor = action["vendor"]
-        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
-            kpi_sql = db.inject_vendor_filter(
-                db.inject_filters(QUERY_LIBRARY["bwg: kpi summary"], selected_facility, date_from, date_to), vendor)
-            mat_sql = db.inject_vendor_filter(
-                db.inject_filters(QUERY_LIBRARY["bwg: vendor material analytics"], selected_facility, date_from, date_to), vendor)
-            kpi_df, kerr = db.run_query(kpi_sql, BQ_CLIENT_AND_DATASET)
-            mat_df, merr = db.run_query(mat_sql, BQ_CLIENT_AND_DATASET)
-        result_rows = []
-        if kerr:
-            st.error(f"BWG KPI query failed: {kerr}")
-        elif kpi_df is not None:
-            result_rows.append(("bwg: kpi summary", kpi_sql, kpi_df.to_dict("records"), kpi_df.columns.tolist(), True))
-        if merr:
-            st.error(f"BWG material query failed: {merr}")
-        elif mat_df is not None:
-            result_rows.append(("bwg: vendor material analytics", mat_sql, mat_df.to_dict("records"), mat_df.columns.tolist(), False))
-        if result_rows:
-            st.session_state["_results"] = result_rows
-            st.session_state["_results_label"] = f"BWG: {vendor} | {selected_facility_display} | {display_time}"
-    elif action and action.get("type") == "ulb_drill":
-        st.session_state["_ghg_result"] = None
-        vendor = action["vendor"]
-        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
-            kpi_sql = db.inject_vendor_filter(
-                db.inject_filters(QUERY_LIBRARY["ulb: kpi summary"], selected_facility, date_from, date_to), vendor)
-            mat_sql = db.inject_vendor_filter(
-                db.inject_filters(QUERY_LIBRARY["ulb: vendor material analytics"], selected_facility, date_from, date_to), vendor)
-            kpi_df, kerr = db.run_query(kpi_sql, BQ_CLIENT_AND_DATASET)
-            mat_df, merr = db.run_query(mat_sql, BQ_CLIENT_AND_DATASET)
-        result_rows = []
-        if kerr:
-            st.error(f"ULB KPI query failed: {kerr}")
-        elif kpi_df is not None:
-            result_rows.append(("ulb: kpi summary", kpi_sql, kpi_df.to_dict("records"), kpi_df.columns.tolist(), True))
-        if merr:
-            st.error(f"ULB material query failed: {merr}")
-        elif mat_df is not None:
-            result_rows.append(("ulb: vendor material analytics", mat_sql, mat_df.to_dict("records"), mat_df.columns.tolist(), False))
-        if result_rows:
-            st.session_state["_results"] = result_rows
-            st.session_state["_results_label"] = f"ULB: {vendor} | {selected_facility_display} | {display_time}"
 
     if st.session_state.get("_ghg_result"):
         render_ghg_transport_result(st.session_state["_ghg_result"], display_time)

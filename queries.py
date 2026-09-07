@@ -543,7 +543,6 @@ SIDEBAR_GROUPS = {
     "Production Analytics": ["production: kpi summary","production: process x equipment analysis","production: process material analytics","production: equipment analysis","production: shift analysis","production: equipment x shift analysis"],
     "Transport Analytics": ["transport: vendor and vehicle analysis"],
     "ULB Analytics": ["ulb: ward location analysis","ulb: driver analysis"],
-    "BWG Analytics": ["bwg: location analysis"],
     "Outward Analytics": ["outward: kpi summary","outward: customer analysis","outward: customer destination analysis","outward: customer material analytics","outward: material rate trend"],
     "Training Analytics": ["training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],
     "Environmental Impact": ["impact: inward kpi","impact: inward by source type","impact: inward by material category","impact: dispatch kpi","impact: dispatch by destination type","impact: dispatch by material category","impact: recovery rate trend","impact: vendor coverage"],
