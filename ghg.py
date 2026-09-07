@@ -2,30 +2,37 @@
 
 Currently implements: Transport emissions, using India-specific road-freight
 emission intensity values (Smart Freight Centre + TCI-IIMB, "India Default
-GHG Emission Values V1.0", May 2025 — https://smart-freight-centre-media.s3.amazonaws.com/documents/India_Default_GHG_Emission_Values_V1_SFC_INDIA_latest.pdf).
+GHG Emission Values V1.0", May 2025).
 
 Since actual vehicle size per trip isn't tracked, a distance-based tier
 stands in for vehicle class — this is a documented simplification, not a
 precise per-trip calculation, and is labeled as such in every result.
 
+BIGQUERY MIGRATION NOTE: this module now takes a (client, dataset_ref) pair
+instead of a Postgres connection string, and uses BigQuery's parameterized
+query syntax (@name placeholders + QueryJobConfig.query_parameters) instead
+of sqlalchemy's :name style. The ghg_distance_lookup table itself is created
+by load_ghg_distances.py, which is a SEPARATE script that has NOT been
+migrated to BigQuery yet (it still has Postgres-specific SQL -- SERIAL
+PRIMARY KEY, etc.). Until that script is rewritten too, this table won't
+exist in BigQuery, so load_distance_lookup() will hit its except branch and
+return an empty DataFrame -- the same graceful "no distance data loaded yet"
+behavior this already had for a facility with no rows, not a crash. The
+Transport GHG feature will show "no distance data" for every facility until
+load_ghg_distances.py is migrated as a follow-up.
+
 Not yet implemented (waiting on data/methodology decisions):
-  - Electricity (Scope 2) — needs confirmation on whether bills state
+  - Electricity (Scope 2) -- needs confirmation on whether bills state
     'units consumed' directly vs. back-calculating from bill amount / rate.
-  - Machinery breakdown — needs equipment operating-hours source confirmed
+  - Machinery breakdown -- needs equipment operating-hours source confirmed
     (production.time_taken_in_hrs) once electricity totals exist to break down.
-  - Material recovery avoided-emissions — needs India-appropriate per-material
+  - Material recovery avoided-emissions -- needs India-appropriate per-material
     factors, not yet sourced.
 """
 import re
 import pandas as pd
-from sqlalchemy import text
+from google.cloud import bigquery
 
-import db as db_module
-
-# India road-freight emission intensity values, kg CO2e per tonne-km (WTW).
-# Source: India Default GHG Emission Values V1.0 (Smart Freight Centre / TCI-IIMB, May 2025).
-# Distance tiers stand in for vehicle class in the absence of per-trip vehicle data —
-# see module docstring.
 TRANSPORT_EMISSION_TIERS = [
     (50, 0.1400, "Medium Commercial (5-12t) — local/ward collection"),
     (150, 0.0902, "Heavy Commercial (12-20t) — regional"),
@@ -41,41 +48,49 @@ def _emission_factor_for_distance(distance_km: float) -> tuple:
 
 
 def _normalize_entity(name: str) -> str:
-    """Strips case, spacing, and punctuation so 'Dalmia Cement' and
-    'DalmiaCement' (or 'Hassan Traders' / 'HASSAN TRADERS') match the same
-    distance-lookup row, without requiring historical transaction data to be
-    cleaned up first."""
     if not name:
         return ""
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def load_distance_lookup(db_url: str, facility: str) -> pd.DataFrame:
+def _run_param_query(client_and_dataset, sql: str, params: dict) -> pd.DataFrame:
+    """Runs a parameterized query against BigQuery. params is a plain dict
+    of {name: value} -- values typed STRING here, the only type this module
+    needs (facility name, date strings)."""
+    client, dataset_ref = client_and_dataset
+    query_params = [bigquery.ScalarQueryParameter(name, "STRING", value) for name, value in params.items()]
+    job_config = bigquery.QueryJobConfig(
+        default_dataset=dataset_ref,
+        query_parameters=query_params,
+    )
+    return client.query(sql, job_config=job_config).to_dataframe()
+
+
+def load_distance_lookup(client_and_dataset, facility: str) -> pd.DataFrame:
     """Reads the ghg_distance_lookup table for a facility. Returns empty
-    DataFrame (not an error) if the table doesn't exist yet or has no rows —
-    callers should treat that as 'no transport data available yet', not crash."""
+    DataFrame (not an error) if the table doesn't exist yet or has no rows --
+    see module docstring for why this currently always hits the except
+    branch until load_ghg_distances.py is separately migrated."""
     try:
-        engine = db_module.get_engine(db_url)
-        with engine.connect() as conn:
-            df = pd.read_sql_query(
-                text("SELECT from_entity, to_entity, direction, distance_km, "
-                     "from_entity_normalized, to_entity_normalized "
-                     "FROM ghg_distance_lookup WHERE facility = :facility"),
-                conn, params={"facility": facility})
+        df = _run_param_query(
+            client_and_dataset,
+            "SELECT from_entity, to_entity, direction, distance_km, "
+            "from_entity_normalized, to_entity_normalized "
+            "FROM ghg_distance_lookup WHERE facility = @facility",
+            {"facility": facility},
+        )
         return df
     except Exception:
         return pd.DataFrame(columns=["from_entity", "to_entity", "direction", "distance_km",
                                       "from_entity_normalized", "to_entity_normalized"])
 
 
-def calculate_transport_emissions(db_url: str, facility: str, date_from: str, date_to: str) -> dict:
+def calculate_transport_emissions(client_and_dataset, facility: str, date_from: str, date_to: str) -> dict:
     """Returns a dict with the total transport emissions for one facility over
-    a date range, plus transparency fields (how much tonnage was matched vs.
-    excluded because no distance is on file yet) and a per-route breakdown.
-
-    This never silently guesses a distance for an unmatched trip — those
-    tonnes are reported as excluded, not folded into the total."""
-    lookup = load_distance_lookup(db_url, facility)
+    a date range, plus transparency fields and a per-route breakdown. Never
+    silently guesses a distance for an unmatched trip -- those tonnes are
+    reported as excluded, not folded into the total."""
+    lookup = load_distance_lookup(client_and_dataset, facility)
     if lookup.empty:
         return {
             "total_kg_co2e": 0.0, "matched_tonnes": 0.0, "excluded_tonnes": 0.0,
@@ -103,18 +118,22 @@ def calculate_transport_emissions(db_url: str, facility: str, date_from: str, da
                        .drop_duplicates(subset=["to_entity_normalized"], keep="first")
                        .set_index("to_entity_normalized"))
 
-    engine = db_module.get_engine(db_url)
-    with engine.connect() as conn:
-        inward_df = pd.read_sql_query(
-            text("SELECT received_material_from, received_quantity FROM inward "
-                 "WHERE facility = :facility AND date::date BETWEEN :d_from AND :d_to "
-                 "AND received_material_from IS NOT NULL"),
-            conn, params={"facility": facility, "d_from": date_from, "d_to": date_to})
-        outward_df = pd.read_sql_query(
-            text("SELECT customer, dispatched_quantity FROM outward "
-                 "WHERE facility = :facility AND date::date BETWEEN :d_from AND :d_to "
-                 "AND customer IS NOT NULL"),
-            conn, params={"facility": facility, "d_from": date_from, "d_to": date_to})
+    # date is a native DATE column from the sync (see sync_to_bigquery.py's
+    # write_table) -- no cast needed comparing it against DATE-typed params.
+    inward_df = _run_param_query(
+        client_and_dataset,
+        "SELECT received_material_from, received_quantity FROM inward "
+        "WHERE facility = @facility AND date BETWEEN @d_from AND @d_to "
+        "AND received_material_from IS NOT NULL",
+        {"facility": facility, "d_from": date_from, "d_to": date_to},
+    )
+    outward_df = _run_param_query(
+        client_and_dataset,
+        "SELECT customer, dispatched_quantity FROM outward "
+        "WHERE facility = @facility AND date BETWEEN @d_from AND @d_to "
+        "AND customer IS NOT NULL",
+        {"facility": facility, "d_from": date_from, "d_to": date_to},
+    )
 
     total_kg_co2e = 0.0
     matched_tonnes = 0.0

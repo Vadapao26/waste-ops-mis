@@ -28,7 +28,7 @@ from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_G
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-08-21-supply-chain-dashboard-ulb-bwg-fix"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-04-bigquery-migration-phase3"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -58,7 +58,15 @@ user_role = user_info["role"]
 user_facility = user_info["facility"]
 user_name = user_info["name"]
 
-SUPABASE_URL = st.secrets["supabase"]["url"]
+# BigQuery project/dataset + credentials, all from st.secrets — same
+# consistent pattern already used for the Groq API key below. Unlike
+# sync_to_bigquery.py (which runs as a plain script and needs a local
+# credentials.json fallback), app.py always runs via Streamlit, so
+# st.secrets is always populated — locally from .streamlit/secrets.toml,
+# or on Streamlit Cloud from the Secrets UI (never committed to the repo).
+BQ_PROJECT_ID = st.secrets["bigquery"]["project_id"]
+BQ_DATASET = st.secrets["bigquery"]["dataset"]
+BQ_CLIENT_AND_DATASET = db.get_client(BQ_PROJECT_ID, BQ_DATASET, _creds_dict=dict(st.secrets["bigquery"]["credentials"]))
 GROQ_API_KEY = st.secrets["groq"]["api_key"]
 groq_client = llm.get_groq_client(GROQ_API_KEY)
 
@@ -414,7 +422,7 @@ def render_type_presets():
         st.divider()
         st.caption("Analyze one BWG vendor at a time, rather than all of them combined.")
         vendor_list_sql = db.inject_filters(QUERY_LIBRARY["bwg: vendor list"], selected_facility, date_from, date_to)
-        vendor_df, verr = db.run_query(vendor_list_sql, SUPABASE_URL)
+        vendor_df, verr = db.run_query(vendor_list_sql, BQ_CLIENT_AND_DATASET)
         if verr:
             st.error(f"Couldn't load the BWG vendor list: {verr}")
         elif vendor_df is None or vendor_df.empty:
@@ -435,7 +443,7 @@ def render_type_presets():
         st.divider()
         st.caption("Analyze one ULB vendor at a time, rather than all of them combined.")
         vendor_list_sql = db.inject_filters(QUERY_LIBRARY["ulb: vendor list"], selected_facility, date_from, date_to)
-        vendor_df, verr = db.run_query(vendor_list_sql, SUPABASE_URL)
+        vendor_df, verr = db.run_query(vendor_list_sql, BQ_CLIENT_AND_DATASET)
         if verr:
             st.error(f"Couldn't load the ULB vendor list: {verr}")
         elif vendor_df is None or vendor_df.empty:
@@ -461,7 +469,7 @@ def run_and_show_combined(keys, label):
     result_rows = []
     for key in keys:
         sql = db.inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
-        df, error = db.run_query(sql, SUPABASE_URL)
+        df, error = db.run_query(sql, BQ_CLIENT_AND_DATASET)
         if error:
             st.error(f"Query failed for {key}: {error}")
         elif df is not None:
@@ -493,7 +501,7 @@ def _prior_period(d_from: str, d_to: str):
 
 def run_and_show_single(lib_key, is_kpi):
     sql = db.inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
-    df, error = db.run_query(sql, SUPABASE_URL)
+    df, error = db.run_query(sql, BQ_CLIENT_AND_DATASET)
     if error:
         st.error(f"Error running {lib_key}: {error}")
         st.session_state["_results"] = None
@@ -509,7 +517,7 @@ def run_and_show_single(lib_key, is_kpi):
         if is_kpi and len(df) == 1:
             prior_from, prior_to = _prior_period(date_from, date_to)
             prev_sql = db.inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, prior_from, prior_to)
-            prev_df, prev_error = db.run_query(prev_sql, SUPABASE_URL)
+            prev_df, prev_error = db.run_query(prev_sql, BQ_CLIENT_AND_DATASET)
             if not prev_error and prev_df is not None and len(prev_df) == 1:
                 st.session_state["_kpi_prev"][lib_key] = prev_df.to_dict("records")
 
@@ -591,7 +599,7 @@ def analytics_page():
         st.session_state["_results"] = None
         with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
             st.session_state["_ghg_result"] = ghg.calculate_transport_emissions(
-                SUPABASE_URL, action["facility"], date_from, date_to)
+                BQ_CLIENT_AND_DATASET, action["facility"], date_from, date_to)
     elif action and action.get("type") == "bwg_drill":
         st.session_state["_ghg_result"] = None
         vendor = action["vendor"]
@@ -600,8 +608,8 @@ def analytics_page():
                 db.inject_filters(QUERY_LIBRARY["bwg: kpi summary"], selected_facility, date_from, date_to), vendor)
             mat_sql = db.inject_vendor_filter(
                 db.inject_filters(QUERY_LIBRARY["bwg: vendor material analytics"], selected_facility, date_from, date_to), vendor)
-            kpi_df, kerr = db.run_query(kpi_sql, SUPABASE_URL)
-            mat_df, merr = db.run_query(mat_sql, SUPABASE_URL)
+            kpi_df, kerr = db.run_query(kpi_sql, BQ_CLIENT_AND_DATASET)
+            mat_df, merr = db.run_query(mat_sql, BQ_CLIENT_AND_DATASET)
         result_rows = []
         if kerr:
             st.error(f"BWG KPI query failed: {kerr}")
@@ -622,8 +630,8 @@ def analytics_page():
                 db.inject_filters(QUERY_LIBRARY["ulb: kpi summary"], selected_facility, date_from, date_to), vendor)
             mat_sql = db.inject_vendor_filter(
                 db.inject_filters(QUERY_LIBRARY["ulb: vendor material analytics"], selected_facility, date_from, date_to), vendor)
-            kpi_df, kerr = db.run_query(kpi_sql, SUPABASE_URL)
-            mat_df, merr = db.run_query(mat_sql, SUPABASE_URL)
+            kpi_df, kerr = db.run_query(kpi_sql, BQ_CLIENT_AND_DATASET)
+            mat_df, merr = db.run_query(mat_sql, BQ_CLIENT_AND_DATASET)
         result_rows = []
         if kerr:
             st.error(f"ULB KPI query failed: {kerr}")
@@ -678,7 +686,7 @@ def analytics_page():
                 pending["date_from"], pending["date_to"], original_sql=pending.get("original_sql"))
             sql = results.extract_sql(llm_response)
             if sql:
-                df, error = db.run_query(sql, SUPABASE_URL)
+                df, error = db.run_query(sql, BQ_CLIENT_AND_DATASET)
                 if error:
                     with st.chat_message("assistant"):
                         st.error(f"Query error: {error}")
@@ -760,7 +768,7 @@ def analytics_page():
                 llm_response = llm.generate_sql(groq_client, question, "", selected_facility, date_override_from, date_override_to)
                 sql = results.extract_sql(llm_response)
                 if sql:
-                    df, error = db.run_query(sql, SUPABASE_URL)
+                    df, error = db.run_query(sql, BQ_CLIENT_AND_DATASET)
                     if error:
                         with st.chat_message("assistant"):
                             st.error(f"Query error: {error}")

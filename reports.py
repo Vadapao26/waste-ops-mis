@@ -189,7 +189,7 @@ def generate_section_pdf(section_title: str, panels: list, facility: str, displa
 
 
 def generate_selected_types_pdf(analysis_types: list, facilities, facility_display: str, date_from: str, date_to: str,
-                                 display_time: str, db_url: str) -> bytes:
+                                 display_time: str, client_and_dataset) -> bytes:
     """Same as generate_report_pdf but only runs the analysis types the user
     actually picked — lets a team pull just what they need instead of waiting
     for every type to query every time. `facilities` is a list (multi-select
@@ -217,7 +217,7 @@ def generate_selected_types_pdf(analysis_types: list, facilities, facility_displ
 
         for key in keys:
             sql = db.inject_filters(QUERY_LIBRARY[key].strip(), facilities, date_from, date_to)
-            df, error = db.run_query(sql, db_url)
+            df, error = db.run_query(sql, client_and_dataset)
             sub_title = key.split(": ")[1].title() if ": " in key else key.title()
 
             if error:
@@ -251,7 +251,7 @@ def generate_selected_types_pdf(analysis_types: list, facilities, facility_displ
     return buffer.getvalue()
 
 
-def generate_report_pdf(facility: str, date_from: str, date_to: str, display_time: str, db_url: str) -> bytes:
+def generate_report_pdf(facility: str, date_from: str, date_to: str, display_time: str, client_and_dataset) -> bytes:
     styles = _styles()
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -275,7 +275,7 @@ def generate_report_pdf(facility: str, date_from: str, date_to: str, display_tim
 
         for key in keys:
             sql = db.inject_filters(QUERY_LIBRARY[key].strip(), facility, date_from, date_to)
-            df, error = db.run_query(sql, db_url)
+            df, error = db.run_query(sql, client_and_dataset)
             sub_title = key.split(": ")[1].title() if ": " in key else key.title()
 
             if error:
