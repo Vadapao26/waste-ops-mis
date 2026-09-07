@@ -2,10 +2,12 @@ streamlit==1.50.0
 groq==1.0.0
 plotly==6.8.0
 pandas==2.3.3
-sqlalchemy==2.0.51
-psycopg2-binary==2.9.12
 openpyxl==3.1.5
 PyJWT==2.13.0
 bcrypt==5.0.0
 reportlab==4.4.10
 kaleido==0.2.1
+google-cloud-bigquery==3.45.0
+gspread==6.2.1
+google-auth==2.55.1
+db-dtypes==1.7.1
