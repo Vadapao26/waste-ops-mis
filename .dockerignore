@@ -1,20 +1,27 @@
-﻿credentials.json
+# Never let these into the image — secrets baked into a container layer
+# persist there permanently, even in a private registry, even if deleted
+# later in a subsequent build.
+credentials.json
 .streamlit/
 *.json
 !db_context.json
 
+# Local dev cruft that doesn't belong in the image
 venv/
 __pycache__/
 *.pyc
 .git/
 .gitignore
 
+# One-off diagnostic scripts — not part of the running app
 check_*.py
 pull_*.py
 compare_*.py
 inspect_*.py
 test_*.py
 
+# Data files that shouldn't ship in the image
 *.csv
+!pin_area_radii.csv
 *.xlsx
 files.zip
