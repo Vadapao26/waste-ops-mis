@@ -28,7 +28,7 @@ from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_G
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-09-07-remove-bwg-analytics"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-08-ghg-all-facilities-sidebar-tile"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -377,10 +377,15 @@ def render_analysis_sidebar():
                         st.session_state["explorations"] = None
                         st.rerun()
             for key in ANALYSIS_TYPES.get(opt) or []:
-                sub_label = key.split(": ")[1].title() if ": " in key else key.title()
+                is_ghg_transport = key == "impact: transport ghg emissions"
+                sub_label = "🚚 Transport GHG Emissions" if is_ghg_transport else (
+                    key.split(": ")[1].title() if ": " in key else key.title())
                 with st.container(key=f"sidebar_sub_wrap_{opt}_{key}"):
                     if st.button(sub_label, key=f"sidebar_sub_{opt}_{key}", use_container_width=True):
-                        st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
+                        if is_ghg_transport:
+                            st.session_state["_action"] = {"type": "ghg_transport"}
+                        else:
+                            st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
                         st.session_state["active_clarifications"] = None
                         st.session_state["explorations"] = None
                         st.rerun()
@@ -423,18 +428,6 @@ def render_type_presets():
     keys = ANALYSIS_TYPES.get(at) or []
     if not keys:
         return
-
-    if at == "Environmental Impact":
-        if selected_facility == ["MRF"]:
-            st.divider()
-            if st.button("🚚 Transport GHG Emissions (MRF)", key="ghg_transport_mrf"):
-                st.session_state["_action"] = {"type": "ghg_transport", "facility": "MRF"}
-                st.session_state["active_clarifications"] = None
-                st.session_state["explorations"] = None
-                st.rerun()
-        else:
-            st.caption("🚚 Transport GHG Emissions is available for MRF only so far — "
-                       "distance data for other facilities hasn't been loaded yet.")
 
 
 # ── ACTION DISPATCHER HELPERS ─────────────────────────────────────────────────
@@ -500,35 +493,128 @@ def run_and_show_single(lib_key, is_kpi):
 
 # ── PAGE: ANALYTICS ───────────────────────────────────────────────────────────
 # ── GHG TRANSPORT RESULT DISPLAY ──────────────────────────────────────────────
+def _combine_ghg_results(per_facility_results: list) -> dict:
+    """Combines calculate_transport_emissions() results from multiple
+    facilities into one result, for when the context is "All Facilities"
+    or a multi-facility selection. Each facility's daily_breakdown and
+    summary_by_partner get a facility column and are concatenated as-is
+    (each is already correctly aggregated within its own facility, so no
+    re-aggregation across facilities -- a vendor serving two facilities
+    shows as two distinct summary rows, which is more accurate than
+    merging them). Totals are summed; notes are combined."""
+    daily_frames, summary_frames = [], []
+    total_kg_co2e = inward_kg_co2e = outward_kg_co2e = 0.0
+    matched_tonnes = excluded_tonnes = 0.0
+    excluded_trip_count = 0
+    facility_notes = []
+
+    for facility_name, result in per_facility_results:
+        totals = result["totals"]
+        total_kg_co2e += totals["total_kg_co2e"]
+        inward_kg_co2e += totals["inward_kg_co2e"]
+        outward_kg_co2e += totals["outward_kg_co2e"]
+        matched_tonnes += totals["matched_tonnes"]
+        excluded_tonnes += totals["excluded_tonnes"]
+        excluded_trip_count += totals["excluded_trip_count"]
+        if totals["excluded_trip_count"]:
+            facility_notes.append(f"{facility_name}: {totals['note']}")
+
+        if not result["daily_breakdown"].empty:
+            df = result["daily_breakdown"].copy()
+            df.insert(0, "facility", facility_name)
+            daily_frames.append(df)
+        if not result["summary_by_partner"].empty:
+            sf = result["summary_by_partner"].copy()
+            sf.insert(0, "facility", facility_name)
+            summary_frames.append(sf)
+
+    daily_breakdown = pd.concat(daily_frames, ignore_index=True) if daily_frames else pd.DataFrame()
+    summary_by_partner = pd.concat(summary_frames, ignore_index=True) if summary_frames else pd.DataFrame()
+    if not summary_by_partner.empty:
+        summary_by_partner = summary_by_partner.sort_values("total_kg_co2e", ascending=False).reset_index(drop=True)
+
+    note = "; ".join(facility_notes) if facility_notes else "All trips matched to a geocoded location."
+    return {
+        "daily_breakdown": daily_breakdown,
+        "summary_by_partner": summary_by_partner,
+        "totals": {
+            "total_kg_co2e": round(total_kg_co2e, 2),
+            "inward_kg_co2e": round(inward_kg_co2e, 2),
+            "outward_kg_co2e": round(outward_kg_co2e, 2),
+            "matched_tonnes": round(matched_tonnes, 3),
+            "excluded_tonnes": round(excluded_tonnes, 3),
+            "excluded_trip_count": excluded_trip_count,
+            "note": note,
+        },
+    }
+
+
 def render_ghg_transport_result(result: dict, display_time: str):
     st.markdown("### Transport GHG Emissions")
     st.caption(
         "Methodology: India-specific road-freight emission factors "
-        "(Smart Freight Centre / TCI-IIMB, May 2025), distance-tiered as a stand-in "
-        "for vehicle class since per-trip vehicle size isn't tracked. "
+        "(Smart Freight Centre / TCI-IIMB, May 2025). Vehicle size is inferred "
+        "per delivery from material category + quantity, using thresholds "
+        "confirmed against your own operational data. "
         "This is an internal-tracking estimate, not a certified compliance figure."
     )
 
+    totals = result["totals"]
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("Total transport emissions", f"{result['total_kg_co2e']:,.1f} kg CO2e")
+        st.metric("Total transport emissions", f"{totals['total_kg_co2e']:,.1f} kg CO2e")
     with c2:
-        st.metric("Matched tonnage", f"{result['matched_tonnes']:,.2f} t")
+        st.metric("Inward", f"{totals['inward_kg_co2e']:,.1f} kg CO2e")
     with c3:
-        st.metric("Excluded tonnage (no distance yet)", f"{result['excluded_tonnes']:,.2f} t")
+        st.metric("Outward", f"{totals['outward_kg_co2e']:,.1f} kg CO2e")
 
-    if result["excluded_trip_count"]:
-        st.warning(result["note"])
+    if totals["excluded_trip_count"]:
+        st.warning(totals["note"])
     else:
-        st.success(result["note"])
+        st.success(totals["note"])
 
-    if result.get("inconsistency_notes"):
-        for note in result["inconsistency_notes"]:
-            st.warning(f"⚠️ Data check: {note}")
+    daily = result["daily_breakdown"]
+    summary = result["summary_by_partner"]
 
-    if not result["route_breakdown"].empty:
-        st.markdown("**By route**")
-        st.dataframe(result["route_breakdown"], use_container_width=True, hide_index=True)
+    st.markdown("---")
+    st.markdown("#### 1 · Daily breakdown")
+    st.caption("Every real delivery, on its own date — nothing here is summed across days.")
+    if daily.empty:
+        st.info("No deliveries found for this facility/timeframe.")
+    else:
+        tab_in, tab_out = st.tabs(["Inward", "Outward"])
+        with tab_in:
+            inward_daily = daily[daily["direction"] == "inward"].drop(columns=["direction"])
+            if inward_daily.empty:
+                st.caption("No inward deliveries in this window.")
+            else:
+                st.dataframe(inward_daily, use_container_width=True, hide_index=True)
+        with tab_out:
+            outward_daily = daily[daily["direction"] == "outward"].drop(columns=["direction"])
+            if outward_daily.empty:
+                st.caption("No outward deliveries in this window.")
+            else:
+                st.dataframe(outward_daily, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+    st.markdown("#### 2 · Overall summary, by vendor/customer")
+    st.caption("Aggregated on purpose — delivery count shown so it's clear each row can represent multiple trips.")
+    if summary.empty:
+        st.info("No deliveries found for this facility/timeframe.")
+    else:
+        tab_in2, tab_out2 = st.tabs(["Inward (by vendor)", "Outward (by customer)"])
+        with tab_in2:
+            inward_summary = summary[summary["direction"] == "inward"].drop(columns=["direction"])
+            if inward_summary.empty:
+                st.caption("No inward deliveries in this window.")
+            else:
+                st.dataframe(inward_summary, use_container_width=True, hide_index=True)
+        with tab_out2:
+            outward_summary = summary[summary["direction"] == "outward"].drop(columns=["direction"])
+            if outward_summary.empty:
+                st.caption("No outward deliveries in this window.")
+            else:
+                st.dataframe(outward_summary, use_container_width=True, hide_index=True)
 
 
 def analytics_page():
@@ -573,9 +659,14 @@ def analytics_page():
         run_and_show_single(action["key"], action["is_kpi"])
     elif action and action.get("type") == "ghg_transport":
         st.session_state["_results"] = None
+        facilities_to_run = ([f for f in FACILITIES if f != "All Facilities"]
+                              if selected_facility == ["All Facilities"] else selected_facility)
         with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
-            st.session_state["_ghg_result"] = ghg.calculate_transport_emissions(
-                BQ_CLIENT_AND_DATASET, action["facility"], date_from, date_to)
+            per_facility_results = [
+                (fac, ghg.calculate_transport_emissions(BQ_CLIENT_AND_DATASET, fac, date_from, date_to))
+                for fac in facilities_to_run
+            ]
+        st.session_state["_ghg_result"] = _combine_ghg_results(per_facility_results)
 
     if st.session_state.get("_ghg_result"):
         render_ghg_transport_result(st.session_state["_ghg_result"], display_time)

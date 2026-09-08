@@ -1,50 +1,51 @@
 """GHG emissions calculations.
 
-Currently implements: Transport emissions, using India-specific road-freight
-emission intensity values (Smart Freight Centre + TCI-IIMB, "India Default
-GHG Emission Values V1.0", May 2025).
+Transport emissions: combines three independently-built and verified
+pieces --
 
-Since actual vehicle size per trip isn't tracked, a distance-based tier
-stands in for vehicle class — this is a documented simplification, not a
-precise per-trip calculation, and is labeled as such in every result.
+  Phase B: geocoded facility/vendor/customer locations (ghg_entity_locations)
+  Phase C: auto-calculated distance (distance_calc.py)
+  Phase D: inferred vehicle size from material + loading type + quantity
+           (vehicle_size.py), mapped to the official SFC/TCI-IIMB
+           emission-factor class
 
-BIGQUERY MIGRATION NOTE: this module now takes a (client, dataset_ref) pair
-instead of a Postgres connection string, and uses BigQuery's parameterized
-query syntax (@name placeholders + QueryJobConfig.query_parameters) instead
-of sqlalchemy's :name style. The ghg_distance_lookup table itself is created
-by load_ghg_distances.py, which is a SEPARATE script that has NOT been
-migrated to BigQuery yet (it still has Postgres-specific SQL -- SERIAL
-PRIMARY KEY, etc.). Until that script is rewritten too, this table won't
-exist in BigQuery, so load_distance_lookup() will hit its except branch and
-return an empty DataFrame -- the same graceful "no distance data loaded yet"
-behavior this already had for a facility with no rows, not a crash. The
-Transport GHG feature will show "no distance data" for every facility until
-load_ghg_distances.py is migrated as a follow-up.
+Loading type: inward is always loose; outward is always bagged (not yet
+tracked per-shipment -- documented placeholder, confirmed).
 
-Not yet implemented (waiting on data/methodology decisions):
-  - Electricity (Scope 2) -- needs confirmation on whether bills state
-    'units consumed' directly vs. back-calculating from bill amount / rate.
-  - Machinery breakdown -- needs equipment operating-hours source confirmed
-    (production.time_taken_in_hrs) once electricity totals exist to break down.
-  - Material recovery avoided-emissions -- needs India-appropriate per-material
-    factors, not yet sourced.
+Vehicle size is inferred once per DELIVERY (grouped by inward_code /
+outward_code -- one code is one real truck trip, even when it spans
+multiple rows for different materials collected on that trip), not once
+per material row -- a single 1000kg mixed-material trip is one shipment,
+not several small ones.
+
+Output structure (redesigned after a real reporting bug: the original
+version aggregated every delivery across the whole date range into one
+row per vehicle class, which made ~50 separate ~1t deliveries over 3
+months look like a single 54t truck):
+
+  daily_breakdown  -- ONE ROW PER DELIVERY PER MATERIAL. Never aggregated
+                       across dates. This is the ground truth -- every
+                       number here traces to one real, dated shipment.
+  summary_by_partner -- daily_breakdown grouped by (direction, entity),
+                       for a "who contributes most emissions" rollup.
+                       Aggregation is fine here since it's explicitly a
+                       summary, not presented as a single shipment.
+  totals           -- dict with the overall figures (total/inward/outward
+                       kg CO2e, matched/excluded tonnes, note).
+
+Final formula: emissions (kg CO2e) = tonnes x distance_km x WTW emission
+factor (kg CO2e/tonne-km) for the inferred vehicle class -- standard
+tonne-km methodology.
 """
 import re
 import pandas as pd
 from google.cloud import bigquery
 
-TRANSPORT_EMISSION_TIERS = [
-    (50, 0.1400, "Medium Commercial (5-12t) — local/ward collection"),
-    (150, 0.0902, "Heavy Commercial (12-20t) — regional"),
-    (float("inf"), 0.0551, "Tractor-trailer (30-60t) — long-haul"),
-]
+from distance_calc import load_entity_coordinates, distance_between
+from vehicle_size import infer_vehicle_class
 
-
-def _emission_factor_for_distance(distance_km: float) -> tuple:
-    for threshold, factor, label in TRANSPORT_EMISSION_TIERS:
-        if distance_km < threshold:
-            return factor, label
-    return TRANSPORT_EMISSION_TIERS[-1][1], TRANSPORT_EMISSION_TIERS[-1][2]
+INWARD_LOADING_TYPE = "loose"    # confirmed: inward material is always loose
+OUTWARD_LOADING_TYPE = "bagged"  # confirmed: not yet tracked per-shipment; documented placeholder
 
 
 def _normalize_entity(name: str) -> str:
@@ -53,156 +54,134 @@ def _normalize_entity(name: str) -> str:
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
-def _run_param_query(client_and_dataset, sql: str, params: dict) -> pd.DataFrame:
-    """Runs a parameterized query against BigQuery. params is a plain dict
-    of {name: value} -- values typed STRING here, the only type this module
-    needs (facility name, date strings)."""
-    client, dataset_ref = client_and_dataset
-    query_params = [bigquery.ScalarQueryParameter(name, "STRING", value) for name, value in params.items()]
-    job_config = bigquery.QueryJobConfig(
-        default_dataset=dataset_ref,
-        query_parameters=query_params,
-    )
-    return client.query(sql, job_config=job_config).to_dataframe()
-
-
-def load_distance_lookup(client_and_dataset, facility: str) -> pd.DataFrame:
-    """Reads the ghg_distance_lookup table for a facility. Returns empty
-    DataFrame (not an error) if the table doesn't exist yet or has no rows --
-    see module docstring for why this currently always hits the except
-    branch until load_ghg_distances.py is separately migrated."""
-    try:
-        df = _run_param_query(
-            client_and_dataset,
-            "SELECT from_entity, to_entity, direction, distance_km, "
-            "from_entity_normalized, to_entity_normalized "
-            "FROM ghg_distance_lookup WHERE facility = @facility",
-            {"facility": facility},
-        )
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["from_entity", "to_entity", "direction", "distance_km",
-                                      "from_entity_normalized", "to_entity_normalized"])
-
-
 def calculate_transport_emissions(client_and_dataset, facility: str, date_from: str, date_to: str) -> dict:
-    """Returns a dict with the total transport emissions for one facility over
-    a date range, plus transparency fields and a per-route breakdown. Never
-    silently guesses a distance for an unmatched trip -- those tonnes are
-    reported as excluded, not folded into the total."""
-    lookup = load_distance_lookup(client_and_dataset, facility)
-    if lookup.empty:
-        return {
-            "total_kg_co2e": 0.0, "matched_tonnes": 0.0, "excluded_tonnes": 0.0,
-            "excluded_trip_count": 0, "route_breakdown": pd.DataFrame(), "inconsistency_notes": [],
-            "note": f"No distance data loaded yet for {facility}.",
-        }
+    """Returns transport emissions for one facility over a date range, as
+    a per-delivery daily breakdown, a partner-level summary, and overall
+    totals. See module docstring for why these are separate."""
+    client, dataset_ref = client_and_dataset
+    coords = load_entity_coordinates(client_and_dataset)
+    empty_totals = {
+        "total_kg_co2e": 0.0, "inward_kg_co2e": 0.0, "outward_kg_co2e": 0.0,
+        "matched_tonnes": 0.0, "excluded_tonnes": 0.0, "excluded_trip_count": 0,
+        "note": "",
+    }
+    if not coords:
+        empty_totals["note"] = "No location data available yet -- run the Phase A/B location + geocoding scripts first."
+        return {"daily_breakdown": pd.DataFrame(), "summary_by_partner": pd.DataFrame(), "totals": empty_totals}
 
-    inconsistent_notes = []
-    for direction, col in [("inward", "from_entity_normalized"), ("outward", "to_entity_normalized")]:
-        subset = lookup[lookup["direction"] == direction]
-        grouped = subset.groupby(col)["distance_km"].nunique()
-        inconsistent_keys = grouped[grouped > 1].index.tolist()
-        for k in inconsistent_keys:
-            variants = subset[subset[col] == k]
-            inconsistent_notes.append(
-                f"{direction}: '{k}' has inconsistent distances across spelling variants "
-                f"({dict(zip(variants['from_entity'] if direction=='inward' else variants['to_entity'], variants['distance_km']))}) "
-                f"— using the first one found."
-            )
-
-    inward_lookup = (lookup[lookup["direction"] == "inward"]
-                      .drop_duplicates(subset=["from_entity_normalized"], keep="first")
-                      .set_index("from_entity_normalized"))
-    outward_lookup = (lookup[lookup["direction"] == "outward"]
-                       .drop_duplicates(subset=["to_entity_normalized"], keep="first")
-                       .set_index("to_entity_normalized"))
-
-    # date is a native DATE column from the sync (see sync_to_bigquery.py's
-    # write_table) -- no cast needed comparing it against DATE-typed params.
-    inward_df = _run_param_query(
-        client_and_dataset,
-        "SELECT received_material_from, received_quantity FROM inward "
-        "WHERE facility = @facility AND date BETWEEN @d_from AND @d_to "
-        "AND received_material_from IS NOT NULL",
-        {"facility": facility, "d_from": date_from, "d_to": date_to},
-    )
-    outward_df = _run_param_query(
-        client_and_dataset,
-        "SELECT customer, dispatched_quantity FROM outward "
-        "WHERE facility = @facility AND date BETWEEN @d_from AND @d_to "
-        "AND customer IS NOT NULL",
-        {"facility": facility, "d_from": date_from, "d_to": date_to},
-    )
+    job_config_base = bigquery.QueryJobConfig(default_dataset=dataset_ref)
+    inward_df = client.query(
+        "SELECT inward_code, date, vendor_location, material, inward_material_category, received_quantity FROM inward "
+        "WHERE facility = @facility AND date BETWEEN @d_from AND @d_to AND vendor_location IS NOT NULL",
+        job_config=bigquery.QueryJobConfig(
+            default_dataset=dataset_ref,
+            query_parameters=[
+                bigquery.ScalarQueryParameter("facility", "STRING", facility),
+                bigquery.ScalarQueryParameter("d_from", "STRING", date_from),
+                bigquery.ScalarQueryParameter("d_to", "STRING", date_to),
+            ],
+        ),
+    ).to_dataframe()
+    outward_df = client.query(
+        "SELECT outward_code, date, destination, material, outward_material_category, dispatched_quantity FROM outward "
+        "WHERE facility = @facility AND date BETWEEN @d_from AND @d_to AND destination IS NOT NULL",
+        job_config=bigquery.QueryJobConfig(
+            default_dataset=dataset_ref,
+            query_parameters=[
+                bigquery.ScalarQueryParameter("facility", "STRING", facility),
+                bigquery.ScalarQueryParameter("d_from", "STRING", date_from),
+                bigquery.ScalarQueryParameter("d_to", "STRING", date_to),
+            ],
+        ),
+    ).to_dataframe()
 
     total_kg_co2e = 0.0
     matched_tonnes = 0.0
     excluded_tonnes = 0.0
     excluded_trip_count = 0
-    route_rows = []
+    inward_kg_co2e = 0.0
+    outward_kg_co2e = 0.0
+    daily_rows = []  # one row per delivery per material -- never aggregated across dates
 
-    for _, row in inward_df.iterrows():
-        key = _normalize_entity(row["received_material_from"])
-        qty_kg = row["received_quantity"] or 0
-        try:
-            qty_kg = float(qty_kg)
-        except (TypeError, ValueError):
-            qty_kg = 0.0
-        tonnes = qty_kg / 1000.0
-        if key in inward_lookup.index:
-            distance_km = float(inward_lookup.loc[key, "distance_km"])
-            factor, tier_label = _emission_factor_for_distance(distance_km)
-            tonne_km = tonnes * distance_km
-            kg_co2e = tonne_km * factor
-            total_kg_co2e += kg_co2e
-            matched_tonnes += tonnes
-            route_rows.append({
-                "direction": "inward", "entity": row["received_material_from"],
-                "distance_km": distance_km, "tonnes": round(tonnes, 3),
-                "tier": tier_label, "kg_co2e": round(kg_co2e, 2),
-            })
-        else:
-            excluded_tonnes += tonnes
-            excluded_trip_count += 1
+    def _process(df, code_col, location_col, direction, quantity_col, category_col, loading_type):
+        nonlocal total_kg_co2e, matched_tonnes, excluded_tonnes, excluded_trip_count
+        nonlocal inward_kg_co2e, outward_kg_co2e
+        if df.empty:
+            return
+        df = df.copy()
+        df[quantity_col] = pd.to_numeric(df[quantity_col], errors="coerce").fillna(0)
 
-    for _, row in outward_df.iterrows():
-        key = _normalize_entity(row["customer"])
-        qty_kg = row["dispatched_quantity"] or 0
-        try:
-            qty_kg = float(qty_kg)
-        except (TypeError, ValueError):
-            qty_kg = 0.0
-        tonnes = qty_kg / 1000.0
-        if key in outward_lookup.index:
-            distance_km = float(outward_lookup.loc[key, "distance_km"])
-            factor, tier_label = _emission_factor_for_distance(distance_km)
-            tonne_km = tonnes * distance_km
-            kg_co2e = tonne_km * factor
-            total_kg_co2e += kg_co2e
-            matched_tonnes += tonnes
-            route_rows.append({
-                "direction": "outward", "entity": row["customer"],
-                "distance_km": distance_km, "tonnes": round(tonnes, 3),
-                "tier": tier_label, "kg_co2e": round(kg_co2e, 2),
-            })
-        else:
-            excluded_tonnes += tonnes
-            excluded_trip_count += 1
+        for code, delivery in df.groupby(code_col):
+            other_location = delivery[location_col].iloc[0]
+            delivery_date = delivery["date"].iloc[0]
+            total_qty_kg = delivery[quantity_col].sum()
+            if total_qty_kg <= 0:
+                continue
+            total_tonnes = total_qty_kg / 1000.0
 
-    route_df = pd.DataFrame(route_rows)
-    if not route_df.empty:
-        route_df = route_df.groupby(["direction", "entity", "distance_km", "tier"], as_index=False).agg(
-            tonnes=("tonnes", "sum"), kg_co2e=("kg_co2e", "sum")
-        ).sort_values("kg_co2e", ascending=False)
+            dist_km = distance_between(coords, facility, "facility", other_location, direction)
+            if dist_km is None:
+                excluded_tonnes += total_tonnes
+                excluded_trip_count += 1
+                continue
 
-    return {
+            # Vehicle size is inferred from the CATEGORY column (Paper/
+            # Flexible Plastics/Rigid Plastics/Glass/Others/Unsorted
+            # Drywaste), not the granular material name -- the material
+            # name (e.g. "Mixed Rigid Plastics", "Plastics_PETE Mixed")
+            # won't match vehicle_size.py's category lookup table, and was
+            # silently defaulting everything to "Others" before this fix.
+            dominant_idx = delivery[quantity_col].idxmax()
+            dominant_category = delivery.loc[dominant_idx, category_col] or "Others"
+            dominant_material_name = delivery.loc[dominant_idx, "material"] or "Others"
+            vehicle = infer_vehicle_class(dominant_category, loading_type, total_qty_kg)
+            delivery_kg_co2e = total_tonnes * dist_km * vehicle["wtw_kg_co2e_per_tkm"]
+
+            total_kg_co2e += delivery_kg_co2e
+            matched_tonnes += total_tonnes
+            if direction == "inward":
+                inward_kg_co2e += delivery_kg_co2e
+            else:
+                outward_kg_co2e += delivery_kg_co2e
+
+            # One row per material within this ONE delivery -- this delivery's
+            # date and code stay attached, so nothing here can later be
+            # mistaken for a different, bigger shipment.
+            for material, material_qty in delivery.groupby("material")[quantity_col].sum().items():
+                material = material or "Others"
+                share = material_qty / total_qty_kg
+                daily_rows.append({
+                    "date": delivery_date, "delivery_code": code,
+                    "direction": direction, "entity": other_location, "material": material,
+                    "category_used_for_vehicle": dominant_category,
+                    "distance_km": dist_km, "tonnes": round(material_qty / 1000.0, 3),
+                    "vehicle_class": vehicle["official_class"],
+                    "kg_co2e": round(delivery_kg_co2e * share, 2),
+                })
+
+    _process(inward_df, "inward_code", "vendor_location", "inward", "received_quantity", "inward_material_category", INWARD_LOADING_TYPE)
+    _process(outward_df, "outward_code", "destination", "outward", "dispatched_quantity", "outward_material_category", OUTWARD_LOADING_TYPE)
+
+    daily_breakdown = pd.DataFrame(daily_rows)
+    if not daily_breakdown.empty:
+        daily_breakdown = daily_breakdown.sort_values(["direction", "date"]).reset_index(drop=True)
+        summary_by_partner = daily_breakdown.groupby(["direction", "entity"], as_index=False).agg(
+            total_tonnes=("tonnes", "sum"),
+            total_kg_co2e=("kg_co2e", "sum"),
+            n_deliveries=("delivery_code", "nunique"),
+        ).sort_values("total_kg_co2e", ascending=False).reset_index(drop=True)
+    else:
+        summary_by_partner = pd.DataFrame()
+
+    totals = {
         "total_kg_co2e": round(total_kg_co2e, 2),
+        "inward_kg_co2e": round(inward_kg_co2e, 2),
+        "outward_kg_co2e": round(outward_kg_co2e, 2),
         "matched_tonnes": round(matched_tonnes, 3),
         "excluded_tonnes": round(excluded_tonnes, 3),
         "excluded_trip_count": excluded_trip_count,
-        "route_breakdown": route_df,
-        "inconsistency_notes": inconsistent_notes,
-        "note": (f"{excluded_trip_count} trip(s) totalling {round(excluded_tonnes,1)}t excluded — "
-                 f"no distance on file yet for that vendor/customer." if excluded_trip_count else
-                 "All trips matched to a known distance."),
+        "note": (f"{excluded_trip_count} trip(s) totalling {round(excluded_tonnes,1)}t excluded -- "
+                 f"no coordinates on file yet for that vendor/customer location." if excluded_trip_count else
+                 "All trips matched to a geocoded location."),
     }
+    return {"daily_breakdown": daily_breakdown, "summary_by_partner": summary_by_partner, "totals": totals}
