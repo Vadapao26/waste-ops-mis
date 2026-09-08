@@ -424,12 +424,12 @@ def render_topbar(user_name: str, user_role: str, on_logout, breadcrumb: str = N
     with right:
         initials = "".join([p[0] for p in user_name.split()][:2]).upper() or "U"
         with st.container(key="avatar_trigger"):
-            with st.popover(initials, use_container_width=False):
+            with st.popover(initials, width='content'):
                 st.markdown(f"**{user_name}**")
                 st.caption(user_role.title())
                 st.divider()
                 with st.container(key="avatar_menu"):
-                    if st.button("Log out", use_container_width=True, key="avatar_logout_btn"):
+                    if st.button("Log out", width='stretch', key="avatar_logout_btn"):
                         on_logout()
 
 
@@ -499,7 +499,7 @@ div[data-testid="column"] {{ padding: 0 !important; }}
 
             username_input = st.text_input("Username", placeholder="your.name")
             password_input = st.text_input("Password", type="password", placeholder="••••••••")
-            submitted = st.button("Sign in", type="primary", use_container_width=True, key="login_submit_btn")
+            submitted = st.button("Sign in", type="primary", width='stretch', key="login_submit_btn")
 
     st.markdown(f"""<style>
 .st-key-login_submit_btn button {{

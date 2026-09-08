@@ -249,7 +249,7 @@ def auto_chart(df, uid):
             yaxis=dict(tickfont=dict(size=11), gridcolor=theme.PALETTE["border"]),
             legend_title_text=color_col.replace("_", " ").title() if color_col else None,
         )
-        st.plotly_chart(fig, use_container_width=True, key=f"chart_{uid}")
+        st.plotly_chart(fig, width='stretch', key=f"chart_{uid}")
     except Exception as e:
         st.caption(f"Chart error: {e}")
 
@@ -299,13 +299,13 @@ def show_result_panel(df, sql, label, num_months, is_kpi=False, panel_id=None, p
         for i, month in enumerate(months):
             with tabs[i]:
                 month_df = df[df["month"]==month].reset_index(drop=True)
-                st.dataframe(format_dataframe(add_summary_row(month_df.copy())), use_container_width=True, height=280)
+                st.dataframe(format_dataframe(add_summary_row(month_df.copy())), width='stretch', height=280)
                 st.download_button(f"Download {month}", data=df_to_csv_bytes(month_df),
                     file_name=f"{label}_{month}.csv", mime="text/csv", key=f"csv_{uid}_{month}_{i}")
         with tabs[-1]:
-            st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=280)
+            st.dataframe(format_dataframe(add_summary_row(df.copy())), width='stretch', height=280)
     else:
         # Chart + table side by side for single-month data with enough rows
         if len(df) >= 3:
             auto_chart(df, uid)
-        st.dataframe(format_dataframe(add_summary_row(df.copy())), use_container_width=True, height=320)
+        st.dataframe(format_dataframe(add_summary_row(df.copy())), width='stretch', height=320)

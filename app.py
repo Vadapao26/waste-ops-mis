@@ -28,7 +28,7 @@ from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_G
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-09-08-ghg-all-facilities-sidebar-tile"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-08-fix-use-container-width-deprecation"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -187,7 +187,7 @@ def _facility_card_grid(options, selected_check, on_click, all_facilities_tile=N
                     icon = _FACILITY_ICONS.get(opt, "🏢")
                     is_sel = selected_check(opt)
                     label = f"✓ {icon}  {opt}" if is_sel else f"{icon}  {opt}"
-                    if st.button(label, key=f"fac_card_{opt}", use_container_width=True,
+                    if st.button(label, key=f"fac_card_{opt}", width='stretch',
                                  type="primary" if is_sel else "secondary"):
                         on_click(opt)
                         st.rerun()
@@ -204,7 +204,7 @@ def _timeframe_segmented_bar(options, selected_check, on_click):
         for col, opt in zip(cols, options):
             with col:
                 is_sel = selected_check(opt)
-                if st.button(opt, key=f"tf_seg_{opt}", use_container_width=True,
+                if st.button(opt, key=f"tf_seg_{opt}", width='stretch',
                              type="primary" if is_sel else "secondary"):
                     on_click(opt)
                     st.rerun()
@@ -346,7 +346,7 @@ def render_analysis_sidebar():
                     icon = TYPE_ICONS.get(opt, "•")
                     short_label = opt.replace(" Analytics", "").replace(" Impact", "")
                     label = f"{icon}\n{short_label}"
-                    if st.button(label, key=f"tile_type_{opt}", use_container_width=True,
+                    if st.button(label, key=f"tile_type_{opt}", width='stretch',
                                  type="primary" if is_active else "secondary"):
                         if opt != st.session_state.ctx_analysis_type:
                             st.session_state.ctx_analysis_type = opt
@@ -368,7 +368,7 @@ def render_analysis_sidebar():
             combined_keys = ANALYSIS_TYPE_COMBINED.get(opt)
             if combined_keys:
                 with st.container(key=f"sidebar_sub_wrap_{opt}_all"):
-                    if st.button(f"All {opt.split(' ')[0]}", key=f"sidebar_sub_{opt}_all", use_container_width=True):
+                    if st.button(f"All {opt.split(' ')[0]}", key=f"sidebar_sub_{opt}_all", width='stretch'):
                         st.session_state["_action"] = {
                             "type": "combined", "keys": combined_keys,
                             "label": f"{opt} Full Analysis | {selected_facility_display} | {st.session_state.ctx_timeframe_label}"
@@ -381,7 +381,7 @@ def render_analysis_sidebar():
                 sub_label = "🚚 Transport GHG Emissions" if is_ghg_transport else (
                     key.split(": ")[1].title() if ": " in key else key.title())
                 with st.container(key=f"sidebar_sub_wrap_{opt}_{key}"):
-                    if st.button(sub_label, key=f"sidebar_sub_{opt}_{key}", use_container_width=True):
+                    if st.button(sub_label, key=f"sidebar_sub_{opt}_{key}", width='stretch'):
                         if is_ghg_transport:
                             st.session_state["_action"] = {"type": "ghg_transport"}
                         else:
@@ -404,15 +404,15 @@ def render_analysis_sidebar():
 def render_context_bar():
     c1, c2, c3, _spacer = st.columns([1.6, 1.6, 0.7, 4])
     with c1:
-        if st.button(f"📍  {selected_facility_display}  ✎", key="edit_facility", use_container_width=True,
+        if st.button(f"📍  {selected_facility_display}  ✎", key="edit_facility", width='stretch',
                      help="Change facility"):
             st.session_state.ctx_edit_step = "facility"; st.rerun()
     with c2:
-        if st.button(f"🗓️  {st.session_state.ctx_timeframe_label}  ✎", key="edit_time", use_container_width=True,
+        if st.button(f"🗓️  {st.session_state.ctx_timeframe_label}  ✎", key="edit_time", width='stretch',
                      help="Change timeframe"):
             st.session_state.ctx_edit_step = "time"; st.rerun()
     with c3:
-        if st.button("Reset", key="reset_ctx_btn", use_container_width=True, help="Reset facility and timeframe"):
+        if st.button("Reset", key="reset_ctx_btn", width='stretch', help="Reset facility and timeframe"):
             reset_context(); st.rerun()
     st.markdown(
         f'<p class="ctx-caption">Every question below applies to '
@@ -588,13 +588,13 @@ def render_ghg_transport_result(result: dict, display_time: str):
             if inward_daily.empty:
                 st.caption("No inward deliveries in this window.")
             else:
-                st.dataframe(inward_daily, use_container_width=True, hide_index=True)
+                st.dataframe(inward_daily, width='stretch', hide_index=True)
         with tab_out:
             outward_daily = daily[daily["direction"] == "outward"].drop(columns=["direction"])
             if outward_daily.empty:
                 st.caption("No outward deliveries in this window.")
             else:
-                st.dataframe(outward_daily, use_container_width=True, hide_index=True)
+                st.dataframe(outward_daily, width='stretch', hide_index=True)
 
     st.markdown("---")
     st.markdown("#### 2 · Overall summary, by vendor/customer")
@@ -608,13 +608,13 @@ def render_ghg_transport_result(result: dict, display_time: str):
             if inward_summary.empty:
                 st.caption("No inward deliveries in this window.")
             else:
-                st.dataframe(inward_summary, use_container_width=True, hide_index=True)
+                st.dataframe(inward_summary, width='stretch', hide_index=True)
         with tab_out2:
             outward_summary = summary[summary["direction"] == "outward"].drop(columns=["direction"])
             if outward_summary.empty:
                 st.caption("No outward deliveries in this window.")
             else:
-                st.dataframe(outward_summary, use_container_width=True, hide_index=True)
+                st.dataframe(outward_summary, width='stretch', hide_index=True)
 
 
 def analytics_page():
@@ -740,7 +740,7 @@ def analytics_page():
         exp_cols = st.columns(min(len(st.session_state.explorations), 5))
         for i, exp in enumerate(st.session_state.explorations[:5]):
             with exp_cols[i]:
-                if st.button(exp["label"], key=f"explore_{i}_{date_from}", help=exp.get("description", ""), use_container_width=True):
+                if st.button(exp["label"], key=f"explore_{i}_{date_from}", help=exp.get("description", ""), width='stretch'):
                     st.session_state["_action"] = {
                         "type": "clarification", "question": exp["label"], "choice": exp["label"],
                         "date_from": date_from, "date_to": date_to,
@@ -760,7 +760,7 @@ def analytics_page():
         cols = st.columns(min(len(clarifications), 4))
         for i, c in enumerate(clarifications[:4]):
             with cols[i]:
-                if st.button(c["label"], key=f"clarify_{i}_{abs(hash(q))%10000}", help=c.get("description", ""), use_container_width=True):
+                if st.button(c["label"], key=f"clarify_{i}_{abs(hash(q))%10000}", help=c.get("description", ""), width='stretch'):
                     st.session_state["_action"] = {"type": "clarification", "question": q, "choice": c["label"],
                                                     "date_from": d_from, "date_to": d_to}
                     st.session_state["active_clarifications"] = None
