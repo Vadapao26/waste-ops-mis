@@ -29,7 +29,7 @@ from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_G
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-09-10-fix-plotly-config-warning"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-10-fix-plotly-warning-properly"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -569,7 +569,7 @@ def render_network_map_result(selected_facility: list):
     facility_filter = None if selected_facility == ["All Facilities"] else selected_facility
     with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
         fig = network_map.build_network_map(BQ_CLIENT_AND_DATASET, facility_filter=facility_filter)
-    st.plotly_chart(fig, width='stretch', config={})
+    st.plotly_chart(fig, config={})
 
 
 def render_ghg_transport_result(result: dict, display_time: str):
