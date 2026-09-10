@@ -249,7 +249,7 @@ def auto_chart(df, uid):
             yaxis=dict(tickfont=dict(size=11), gridcolor=theme.PALETTE["border"]),
             legend_title_text=color_col.replace("_", " ").title() if color_col else None,
         )
-        st.plotly_chart(fig, width='stretch', key=f"chart_{uid}")
+        st.plotly_chart(fig, width='stretch', key=f"chart_{uid}", config={})
     except Exception as e:
         st.caption(f"Chart error: {e}")
 
