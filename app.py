@@ -23,12 +23,13 @@ import results
 import nlp_dates
 import reports
 import ghg
+import network_map
 from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_GROUPS, ANALYSIS_TYPE_COMBINED
 
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-09-08-fix-use-container-width-deprecation"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-10-network-map-phase-f"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -82,7 +83,7 @@ defaults = {
     "messages": [], "conversation_history": [], "result_history": [],
     "active_clarifications": None, "clarification_question": None,
     "clarification_date_from": None, "clarification_date_to": None,
-    "explorations": None, "_results": None, "_results_label": None, "_ghg_result": None, "_chat_open": False,
+    "explorations": None, "_results": None, "_results_label": None, "_ghg_result": None, "_show_network_map": None, "_chat_open": False,
     "_kpi_prev": {},
     "ctx_sidebar_expanded": None,
     "ctx_locked": False, "ctx_edit_step": None, "ctx_analysis_type": None,
@@ -155,7 +156,7 @@ def reset_context():
               "ctx_timeframe_label", "ctx_date_from", "ctx_date_to"]:
         st.session_state[k] = defaults[k]
     st.session_state.ctx_num_months = 1
-    for k in ["active_clarifications", "explorations", "_results", "_ghg_result"]:
+    for k in ["active_clarifications", "explorations", "_results", "_ghg_result", "_show_network_map"]:
         st.session_state[k] = None
 
 
@@ -351,6 +352,7 @@ def render_analysis_sidebar():
                         if opt != st.session_state.ctx_analysis_type:
                             st.session_state.ctx_analysis_type = opt
                             st.session_state["_ghg_result"] = None
+                            st.session_state["_show_network_map"] = None
                             st.session_state["active_clarifications"] = None
                             st.session_state["explorations"] = None
                             default_key = _default_sub_key(opt)
@@ -378,12 +380,19 @@ def render_analysis_sidebar():
                         st.rerun()
             for key in ANALYSIS_TYPES.get(opt) or []:
                 is_ghg_transport = key == "impact: transport ghg emissions"
-                sub_label = "🚚 Transport GHG Emissions" if is_ghg_transport else (
-                    key.split(": ")[1].title() if ": " in key else key.title())
+                is_network_map = key == "impact: network map"
+                if is_ghg_transport:
+                    sub_label = "🚚 Transport GHG Emissions"
+                elif is_network_map:
+                    sub_label = "🗺️ Network Map"
+                else:
+                    sub_label = key.split(": ")[1].title() if ": " in key else key.title()
                 with st.container(key=f"sidebar_sub_wrap_{opt}_{key}"):
                     if st.button(sub_label, key=f"sidebar_sub_{opt}_{key}", width='stretch'):
                         if is_ghg_transport:
                             st.session_state["_action"] = {"type": "ghg_transport"}
+                        elif is_network_map:
+                            st.session_state["_action"] = {"type": "network_map"}
                         else:
                             st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
                         st.session_state["active_clarifications"] = None
@@ -549,6 +558,20 @@ def _combine_ghg_results(per_facility_results: list) -> dict:
     }
 
 
+def render_network_map_result(selected_facility: list):
+    st.markdown("### Network Map")
+    st.caption(
+        "Every facility, vendor, and customer geocoded so far, with lines showing which "
+        "partners are connected to which facility \u2014 the same location data the Transport "
+        "GHG Emissions calculation uses. Locations not yet geocoded (no PIN code on file) "
+        "won't appear here."
+    )
+    facility_filter = None if selected_facility == ["All Facilities"] else selected_facility
+    with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
+        fig = network_map.build_network_map(BQ_CLIENT_AND_DATASET, facility_filter=facility_filter)
+    st.plotly_chart(fig, width='stretch')
+
+
 def render_ghg_transport_result(result: dict, display_time: str):
     st.markdown("### Transport GHG Emissions")
     st.caption(
@@ -653,12 +676,15 @@ def analytics_page():
 
     if action and action.get("type") == "combined":
         st.session_state["_ghg_result"] = None
+        st.session_state["_show_network_map"] = None
         run_and_show_combined(action["keys"], action["label"])
     elif action and action.get("type") == "library":
         st.session_state["_ghg_result"] = None
+        st.session_state["_show_network_map"] = None
         run_and_show_single(action["key"], action["is_kpi"])
     elif action and action.get("type") == "ghg_transport":
         st.session_state["_results"] = None
+        st.session_state["_show_network_map"] = None
         facilities_to_run = ([f for f in FACILITIES if f != "All Facilities"]
                               if selected_facility == ["All Facilities"] else selected_facility)
         with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
@@ -668,8 +694,16 @@ def analytics_page():
             ]
         st.session_state["_ghg_result"] = _combine_ghg_results(per_facility_results)
 
+    elif action and action.get("type") == "network_map":
+        st.session_state["_results"] = None
+        st.session_state["_ghg_result"] = None
+        st.session_state["_show_network_map"] = True
+
     if st.session_state.get("_ghg_result"):
         render_ghg_transport_result(st.session_state["_ghg_result"], display_time)
+
+    if st.session_state.get("_show_network_map"):
+        render_network_map_result(selected_facility)
 
     if st.session_state.get("_results"):
         panels_for_pdf = []

@@ -545,7 +545,7 @@ SIDEBAR_GROUPS = {
     "ULB Analytics": ["ulb: ward location analysis","ulb: driver analysis"],
     "Outward Analytics": ["outward: kpi summary","outward: customer analysis","outward: customer destination analysis","outward: customer material analytics","outward: material rate trend"],
     "Training Analytics": ["training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],
-    "Environmental Impact": ["impact: inward kpi","impact: inward by source type","impact: inward by material category","impact: dispatch kpi","impact: dispatch by destination type","impact: dispatch by material category","impact: recovery rate trend","impact: vendor coverage","impact: transport ghg emissions"],
+    "Environmental Impact": ["impact: inward kpi","impact: inward by source type","impact: inward by material category","impact: dispatch kpi","impact: dispatch by destination type","impact: dispatch by material category","impact: recovery rate trend","impact: vendor coverage","impact: transport ghg emissions","impact: network map"],
     "Supply Chain Analytics": ["supply chain: kpi summary","supply chain: inward rate rejection history","supply chain: outward rate rejection history"],
 }
 
