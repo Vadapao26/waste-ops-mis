@@ -119,7 +119,7 @@ def calculate_transport_emissions(client_and_dataset, facility: str, date_from: 
                 continue
             total_tonnes = total_qty_kg / 1000.0
 
-            dist_km = distance_between(coords, facility, "facility", other_location, direction)
+            dist_km = distance_between(coords, facility, other_location, direction)
             if dist_km is None:
                 excluded_tonnes += total_tonnes
                 excluded_trip_count += 1

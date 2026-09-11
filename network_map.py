@@ -23,7 +23,9 @@ def build_network_map(client_and_dataset, facility_filter: list = None) -> go.Fi
     client, dataset_ref = client_and_dataset
     job_config = bigquery.QueryJobConfig(default_dataset=dataset_ref)
     df = client.query(
-        "SELECT location, direction, seen_at_facilities, latitude, longitude FROM ghg_entity_locations",
+        "SELECT location, direction, seen_at_facilities, "
+        "COALESCE(direct_lat, pin_lat) AS latitude, COALESCE(direct_lon, pin_lon) AS longitude "
+        "FROM ghg_entity_locations",
         job_config=job_config,
     ).to_dataframe()
 
