@@ -12,3 +12,7 @@ venv/
 credentials.json
 .streamlit/
 credentials.json
+# diagnostic + extract outputs (contain facility expense/revenue figures)
+*_audit*.txt
+query_diagnosis.txt
+pnl_data/
