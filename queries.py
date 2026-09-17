@@ -189,11 +189,11 @@ QUERY_LIBRARY = {
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost=0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS non_valuables_pct,
             ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS total_material_value,
             ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS total_net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER};""",
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE 'ULB%' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER};""",
 
     "ulb: vendor list": """
         SELECT DISTINCT received_material_from AS vendor, vendor_location AS location
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE 'ULB%' {AND_FACILITY_FILTER}
         ORDER BY vendor;""",
 
     "ulb: vendor material analytics": """
@@ -201,7 +201,7 @@ QUERY_LIBRARY = {
             SUM(accepted_quantity) AS total_accepted_kg,
             SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
             ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE 'ULB%' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER}
         GROUP BY material ORDER BY total_received_kg DESC;""",
 
 
@@ -213,7 +213,7 @@ QUERY_LIBRARY = {
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
             ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS material_value,
             ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE 'ULB%' {AND_FACILITY_FILTER}
         GROUP BY month,facility,ward_location ORDER BY month DESC,total_received_kg DESC;""",
 
     "ulb: driver analysis": """
@@ -222,7 +222,7 @@ QUERY_LIBRARY = {
             SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
             ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward WHERE source='ULB' {AND_FACILITY_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE 'ULB%' {AND_FACILITY_FILTER}
         GROUP BY month,facility,driver ORDER BY month DESC,total_trips DESC;""",
 
     "bwg: kpi summary": """
@@ -231,19 +231,19 @@ QUERY_LIBRARY = {
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct,
             ROUND((SUM(value_of_accepted_material::numeric))::numeric,2) AS total_material_value,
             ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS total_net_procurement_cost
-        FROM inward WHERE source='Bulk waste generator' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER};""",
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE '%BULK WASTE GENERATOR%' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER};""",
 
     "bwg: location analysis": """
         SELECT TO_CHAR(date::date,'YYYY-MM') AS month, facility, vendor_location AS location, received_material_from AS vendor,
             SUM(received_quantity) AS total_received_kg, SUM(accepted_quantity) AS total_accepted_kg,
             SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
             ROUND((100.0*SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END)/NULLIF(SUM(accepted_quantity),0))::numeric,2) AS valuables_pct
-        FROM inward WHERE source='Bulk waste generator' {AND_FACILITY_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE '%BULK WASTE GENERATOR%' {AND_FACILITY_FILTER}
         GROUP BY month,facility,location,vendor ORDER BY month DESC,total_received_kg DESC;""",
 
     "bwg: vendor list": """
         SELECT DISTINCT received_material_from AS vendor, vendor_location AS location
-        FROM inward WHERE source='Bulk waste generator' {AND_FACILITY_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE '%BULK WASTE GENERATOR%' {AND_FACILITY_FILTER}
         ORDER BY vendor;""",
 
     "bwg: vendor material analytics": """
@@ -251,7 +251,7 @@ QUERY_LIBRARY = {
             SUM(accepted_quantity) AS total_accepted_kg,
             SUM(CASE WHEN net_procurement_cost>0 THEN accepted_quantity ELSE 0 END) AS total_valuables_kg,
             ROUND((SUM(net_procurement_cost::numeric))::numeric,2) AS net_procurement_cost
-        FROM inward WHERE source='Bulk waste generator' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER}
+        FROM inward WHERE UPPER(COALESCE(NULLIF(source_type,''),NULLIF(source,''))) LIKE '%BULK WASTE GENERATOR%' {AND_FACILITY_FILTER} {AND_VENDOR_FILTER}
         GROUP BY material ORDER BY total_received_kg DESC;""",
 
     "outward: kpi summary": """
@@ -305,8 +305,8 @@ QUERY_LIBRARY = {
         WITH inward_agg AS (
             SELECT
                 SUM(received_quantity::numeric) AS material_sourced_kg,
-                SUM(CASE WHEN source_type = 'Aggregators' THEN received_quantity::numeric ELSE 0 END) AS aggregators_inward_kg,
-                SUM(CASE WHEN source_type = 'Waste Picker' THEN received_quantity::numeric ELSE 0 END) AS wpc_kg,
+                SUM(CASE WHEN UPPER(source_type) LIKE 'AGGREGATOR%' THEN received_quantity::numeric ELSE 0 END) AS aggregators_inward_kg,
+                SUM(CASE WHEN UPPER(source_type) LIKE 'WASTE PICKER%' THEN received_quantity::numeric ELSE 0 END) AS wpc_kg,
                 SUM(net_procurement_cost::numeric) AS cost_of_material,
                 ROUND((100.0*SUM(rejected_quantity::numeric)/NULLIF(SUM(received_quantity::numeric),0))::numeric,2) AS deduction_pct_inward
             FROM inward {FACILITY_FILTER}
@@ -456,16 +456,20 @@ QUERY_LIBRARY = {
         ORDER BY month DESC,total_mt DESC;""",
 
     "impact: inward by material category": """
-        SELECT
-            TO_CHAR(date::date,'YYYY-MM') AS month,
-            facility,
-            COALESCE(inward_material_category,'Unknown') AS material_category,
-            ROUND((SUM(accepted_quantity::numeric)/1000)::numeric,3) AS total_mt,
-            ROUND((SUM(accepted_quantity::numeric)/1000*100/
-                NULLIF(SUM(SUM(accepted_quantity::numeric)) OVER(PARTITION BY TO_CHAR(date::date,'YYYY-MM'),facility),0))::numeric,2) AS pct_of_total
-        FROM inward
-        {FACILITY_FILTER}
-        GROUP BY TO_CHAR(date::date,'YYYY-MM'),facility,COALESCE(inward_material_category,'Unknown')
+        WITH base AS (
+            SELECT
+                TO_CHAR(date::date,'YYYY-MM') AS month,
+                facility,
+                COALESCE(inward_material_category,'Unknown') AS material_category,
+                SUM(accepted_quantity::numeric) AS accepted_kg
+            FROM inward
+            {FACILITY_FILTER}
+            GROUP BY 1,2,3
+        )
+        SELECT month, facility, material_category,
+            ROUND((accepted_kg/1000)::numeric,3) AS total_mt,
+            ROUND((100.0*accepted_kg/NULLIF(SUM(accepted_kg) OVER(PARTITION BY month,facility),0))::numeric,2) AS pct_of_total
+        FROM base
         ORDER BY month DESC,total_mt DESC;""",
 
     "impact: dispatch kpi": """
