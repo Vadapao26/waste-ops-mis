@@ -9,11 +9,14 @@ Architecture: this file only orchestrates. Business logic lives in:
   theme.py     — design tokens, global CSS, login page, top-right avatar
 """
 import calendar
+import os
 import random
+import tempfile
 from datetime import date, timedelta
 
 import bcrypt
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 import theme
@@ -24,6 +27,8 @@ import nlp_dates
 import reports
 import ghg
 import network_map
+import pnl
+import pnl_export
 from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_GROUPS, ANALYSIS_TYPE_COMBINED
 
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
@@ -83,7 +88,7 @@ defaults = {
     "messages": [], "conversation_history": [], "result_history": [],
     "active_clarifications": None, "clarification_question": None,
     "clarification_date_from": None, "clarification_date_to": None,
-    "explorations": None, "_results": None, "_results_label": None, "_ghg_result": None, "_show_network_map": None, "_chat_open": False,
+    "explorations": None, "_results": None, "_results_label": None, "_ghg_result": None, "_show_network_map": None, "_pnl_result": None, "_chat_open": False,
     "_kpi_prev": {},
     "ctx_sidebar_expanded": None,
     "ctx_locked": False, "ctx_edit_step": None, "ctx_analysis_type": None,
@@ -156,7 +161,7 @@ def reset_context():
               "ctx_timeframe_label", "ctx_date_from", "ctx_date_to"]:
         st.session_state[k] = defaults[k]
     st.session_state.ctx_num_months = 1
-    for k in ["active_clarifications", "explorations", "_results", "_ghg_result", "_show_network_map"]:
+    for k in ["active_clarifications", "explorations", "_results", "_ghg_result", "_show_network_map", "_pnl_result"]:
         st.session_state[k] = None
 
 
@@ -298,6 +303,8 @@ TYPE_ICONS = {
     "Inward Analytics": "📥", "Production Analytics": "⚙️", "Outward Analytics": "📤",
     "Transport Analytics": "🚚", "ULB Analytics": "🏛️",
     "Training Analytics": "🎓", "Environmental Impact": "🌱", "Supply Chain Analytics": "🔗",
+    "BWG Analytics": "🏢",
+    "Financials": "📊",
     "Custom AI Query": "💬",
 }
 # Groups by real operational stage rather than one flat list: the material's
@@ -353,6 +360,7 @@ def render_analysis_sidebar():
                             st.session_state.ctx_analysis_type = opt
                             st.session_state["_ghg_result"] = None
                             st.session_state["_show_network_map"] = None
+                            st.session_state["_pnl_result"] = None
                             st.session_state["active_clarifications"] = None
                             st.session_state["explorations"] = None
                             default_key = _default_sub_key(opt)
@@ -381,10 +389,13 @@ def render_analysis_sidebar():
             for key in ANALYSIS_TYPES.get(opt) or []:
                 is_ghg_transport = key == "impact: transport ghg emissions"
                 is_network_map = key == "impact: network map"
+                is_pnl = key == "financials: profit and loss"
                 if is_ghg_transport:
                     sub_label = "🚚 Transport GHG Emissions"
                 elif is_network_map:
                     sub_label = "🗺️ Network Map"
+                elif is_pnl:
+                    sub_label = "📊 Profit & Loss"
                 else:
                     sub_label = key.split(": ")[1].title() if ": " in key else key.title()
                 with st.container(key=f"sidebar_sub_wrap_{opt}_{key}"):
@@ -393,6 +404,8 @@ def render_analysis_sidebar():
                             st.session_state["_action"] = {"type": "ghg_transport"}
                         elif is_network_map:
                             st.session_state["_action"] = {"type": "network_map"}
+                        elif is_pnl:
+                            st.session_state["_action"] = {"type": "pnl"}
                         else:
                             st.session_state["_action"] = {"type": "library", "key": key, "is_kpi": "kpi" in key}
                         st.session_state["active_clarifications"] = None
@@ -447,6 +460,7 @@ def run_and_show_combined(keys, label):
     result_rows = []
     for key in keys:
         sql = db.inject_filters(QUERY_LIBRARY[key].strip(), selected_facility, date_from, date_to)
+        sql = db.inject_vendor_filter(sql, None)
         df, error = db.run_query(sql, BQ_CLIENT_AND_DATASET)
         if error:
             st.error(f"Query failed for {key}: {error}")
@@ -479,6 +493,11 @@ def _prior_period(d_from: str, d_to: str):
 
 def run_and_show_single(lib_key, is_kpi):
     sql = db.inject_filters(QUERY_LIBRARY[lib_key].strip(), selected_facility, date_from, date_to)
+    # Strips {AND_VENDOR_FILTER} when there's no vendor drill-down. Without this
+    # the placeholder reaches BigQuery as literal text and the query is a syntax
+    # error — which is why the ULB/BWG queries carrying it were removed from the
+    # sidebar instead of fixed.
+    sql = db.inject_vendor_filter(sql, None)
     df, error = db.run_query(sql, BQ_CLIENT_AND_DATASET)
     if error:
         st.error(f"Error running {lib_key}: {error}")
@@ -498,6 +517,132 @@ def run_and_show_single(lib_key, is_kpi):
             prev_df, prev_error = db.run_query(prev_sql, BQ_CLIENT_AND_DATASET)
             if not prev_error and prev_df is not None and len(prev_df) == 1:
                 st.session_state["_kpi_prev"][lib_key] = prev_df.to_dict("records")
+
+
+# ── P&L RESULT DISPLAY ────────────────────────────────────────────────────────
+# Charts read theme.PALETTE so the P&L matches every other view. Two rules kept
+# deliberately: no dual-axis anywhere (revenue and cost share one rupee scale),
+# and cost composition is a horizontal bar, never a pie — a pie can't be read
+# for magnitude once there are more than four slices.
+def render_pnl_result(result: dict, facility_label: str, display_time: str):
+    CHART = theme.PALETTE["chart"]
+    POS = theme.PALETTE.get("good", CHART[0])
+    NEG = theme.PALETTE.get("bad", "#c0392b")
+
+    def _layout(fig, h=320, legend=False):
+        fig.update_layout(
+            height=h, margin=dict(l=8, r=8, t=36, b=8),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            showlegend=legend,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            font=dict(family="Inter, sans-serif", color=theme.PALETTE["ink"], size=12),
+            title_font=dict(size=13, color=theme.PALETTE["sub"]),
+            xaxis=dict(gridcolor=theme.PALETTE["border"], tickfont=dict(size=11)),
+            yaxis=dict(gridcolor=theme.PALETTE["border"], tickfont=dict(size=11)),
+        )
+        return fig
+
+    st.markdown("### Profit & Loss")
+    st.caption(f"{facility_label} · {display_time}")
+    st.warning(pnl.DISCLAIMER)
+
+    wide = pnl.pivot(result, consolidated=True)
+    if wide.empty:
+        st.info("No financial data for this facility and timeframe.")
+        return
+    months = list(wide.columns)
+    latest = months[-1]
+
+    def val(line, m):
+        v = wide.at[line, m] if line in wide.index else float("nan")
+        return 0.0 if pd.isna(v) else float(v)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Revenue", f"₹{val('Total Revenue', latest):,.0f}")
+    c2.metric("Total Cost", f"₹{val('Total Cost', latest):,.0f}")
+    c3.metric("EBITDA", f"₹{val('EBITDA', latest):,.0f}")
+    c4.metric("EBITDA %", f"{val('EBITDA %', latest):,.1f}%")
+    st.caption(f"Headline figures are for {latest}. Totals cover automated lines only — "
+               "the red FILL MANUALLY rows are not included until entered.")
+
+    st.markdown("#### Statement")
+    st.dataframe(pnl.style_pnl(wide), width='stretch')
+
+    hints = pnl.manual_line_hints(result)
+    if not hints.empty:
+        with st.expander("Values the database holds for manual lines"):
+            st.caption("Shown so nothing is lost — these are NOT counted in the totals above.")
+            st.dataframe(hints, width='stretch')
+
+    st.markdown("#### Trend")
+    a, b = st.columns(2)
+    with a:
+        rc = pd.DataFrame({"month": months,
+                           "Revenue": [val("Total Revenue", m) for m in months],
+                           "Cost": [val("Total Cost", m) for m in months]})
+        fig = px.bar(rc, x="month", y=["Revenue", "Cost"], barmode="group",
+                     title="Revenue vs total cost", color_discrete_sequence=[CHART[0], CHART[1]])
+        fig.update_yaxes(title_text="₹")
+        st.plotly_chart(_layout(fig, legend=True), width='stretch')
+    with b:
+        eb = [val("EBITDA", m) for m in months]
+        fig = px.bar(pd.DataFrame({"month": months, "EBITDA": eb}), x="month", y="EBITDA",
+                     title="EBITDA by month")
+        fig.update_traces(marker_color=[POS if v >= 0 else NEG for v in eb])
+        fig.add_hline(y=0, line_width=1, line_color=theme.PALETTE["border"])
+        fig.update_yaxes(title_text="₹")
+        st.plotly_chart(_layout(fig), width='stretch')
+
+    cost_rows = [(l, val(l, latest)) for l in pnl.COST_LINES
+                 if l in wide.index and val(l, latest) > 0]
+    if cost_rows:
+        comp = pd.DataFrame(cost_rows, columns=["line", "amount"]).nlargest(10, "amount")
+        fig = px.bar(comp.sort_values("amount"), x="amount", y="line", orientation="h",
+                     title=f"Largest cost lines · {latest}",
+                     color_discrete_sequence=[CHART[2 % len(CHART)]])
+        fig.update_xaxes(title_text="₹"); fig.update_yaxes(title_text="")
+        st.plotly_chart(_layout(fig, h=380), width='stretch')
+
+    if len(months) >= 2:
+        st.markdown(f"#### What changed · {months[-2]} → {latest}")
+        mv = pnl.variance(wide, months[-2], latest)
+        if mv.empty:
+            st.caption("No comparable lines between these two months.")
+        else:
+            st.dataframe(mv, width='stretch', hide_index=True)
+            st.caption("Subtotals are excluded — 'Total Cost moved' restates the question "
+                       "rather than answering it.")
+
+    unmapped = result["unmapped"]
+    if not unmapped.empty:
+        with st.expander(f"Unmapped expense categories (₹{unmapped['amount'].sum():,.0f})"):
+            st.caption("Not yet assigned a P&L line in pnl_mapping.csv. Shown here rather "
+                       "than folded into Other expenses, so the P&L always reconciles to "
+                       "the expense table.")
+            st.dataframe(unmapped.groupby("category", as_index=False)["amount"].sum()
+                         .sort_values("amount", ascending=False), width='stretch', hide_index=True)
+
+    with st.expander("Sourcing assumptions"):
+        st.dataframe(pnl.describe_assumptions(result), width='stretch', hide_index=True)
+
+    st.markdown("---")
+    if st.button("📥 Export to Excel (statement + all source data)", key="pnl_xlsx"):
+        facilities_to_run = ([f for f in FACILITIES if f != "All Facilities"]
+                              if selected_facility == ["All Facilities"] else selected_facility)
+        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
+            tmp = os.path.join(tempfile.gettempdir(),
+                               f"PnL_{facility_label.replace(' ', '_')[:30]}_{date_from}_{date_to}.xlsx")
+            pnl_export.export_workbook(BQ_CLIENT_AND_DATASET, facilities_to_run,
+                                       date_from, date_to, tmp, facility_label)
+            with open(tmp, "rb") as fh:
+                data = fh.read()
+        st.download_button(
+            "Save workbook", data=data, key="pnl_xlsx_save",
+            file_name=os.path.basename(tmp),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.caption("One sheet per month in your existing P&L layout, plus the Sale, "
+                   "Inward, Expense and Revenue rows behind every figure. Each line is "
+                   "a SUMIFS over those sheets — click any cell to trace it.")
 
 
 # ── PAGE: ANALYTICS ───────────────────────────────────────────────────────────
@@ -677,14 +822,17 @@ def analytics_page():
     if action and action.get("type") == "combined":
         st.session_state["_ghg_result"] = None
         st.session_state["_show_network_map"] = None
+        st.session_state["_pnl_result"] = None
         run_and_show_combined(action["keys"], action["label"])
     elif action and action.get("type") == "library":
         st.session_state["_ghg_result"] = None
         st.session_state["_show_network_map"] = None
+        st.session_state["_pnl_result"] = None
         run_and_show_single(action["key"], action["is_kpi"])
     elif action and action.get("type") == "ghg_transport":
         st.session_state["_results"] = None
         st.session_state["_show_network_map"] = None
+        st.session_state["_pnl_result"] = None
         facilities_to_run = ([f for f in FACILITIES if f != "All Facilities"]
                               if selected_facility == ["All Facilities"] else selected_facility)
         with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
@@ -697,13 +845,27 @@ def analytics_page():
     elif action and action.get("type") == "network_map":
         st.session_state["_results"] = None
         st.session_state["_ghg_result"] = None
+        st.session_state["_pnl_result"] = None
         st.session_state["_show_network_map"] = True
+
+    elif action and action.get("type") == "pnl":
+        st.session_state["_results"] = None
+        st.session_state["_ghg_result"] = None
+        st.session_state["_show_network_map"] = None
+        facilities_to_run = ([f for f in FACILITIES if f != "All Facilities"]
+                              if selected_facility == ["All Facilities"] else selected_facility)
+        with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
+            st.session_state["_pnl_result"] = pnl.calculate_pnl(
+                BQ_CLIENT_AND_DATASET, facilities_to_run, date_from, date_to)
 
     if st.session_state.get("_ghg_result"):
         render_ghg_transport_result(st.session_state["_ghg_result"], display_time)
 
     if st.session_state.get("_show_network_map"):
         render_network_map_result(selected_facility)
+
+    if st.session_state.get("_pnl_result"):
+        render_pnl_result(st.session_state["_pnl_result"], selected_facility_display, display_time)
 
     if st.session_state.get("_results"):
         panels_for_pdf = []

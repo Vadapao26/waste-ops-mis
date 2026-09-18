@@ -37,18 +37,27 @@ def format_dataframe(df):
     MONEY_SUFFIXES = ['_cost','_revenue','_paid','_amount','_value','_incentive','_procurement']
     PCT_SUFFIXES = ['_pct','_percent']
     COST_COLS = ['net_procurement_cost','net_cost_per_kg','net_material_sales_cost','net_revenue','net_revenue_per_kg']
+    # NaN is a float, so the isinstance guards below let it through and it
+    # renders as the literal "₹nan" / "nan%". A NULL in the source column is
+    # not a number to format — show it as blank and let the reader see that
+    # nothing was recorded, rather than a figure that looks like data.
+    def _numeric(x):
+        return (isinstance(x, (int, float)) and not isinstance(x, bool)
+                and not pd.isna(x) and str(x) not in ['TOTAL', 'AVG', ''])
+
     for col in df.columns:
         col_lower = col.lower()
         if any(col_lower.endswith(s) for s in PCT_SUFFIXES):
-            df[col] = df[col].apply(lambda x: f'{x:.2f}%' if isinstance(x,(int,float)) and str(x) not in ['TOTAL','AVG',''] else x)
+            df[col] = df[col].apply(lambda x: f'{x:.2f}%' if _numeric(x) else ('' if isinstance(x, float) and pd.isna(x) else x))
         elif col_lower in COST_COLS:
             def fmt_cost(x):
-                if not isinstance(x,(int,float)) or str(x) in ['TOTAL','AVG','']: return x
+                if not _numeric(x):
+                    return '' if isinstance(x, float) and pd.isna(x) else x
                 if x < 0: return f'₹{abs(x):,.2f} (cost)'
                 return f'₹{x:,.2f}'
             df[col] = df[col].apply(fmt_cost)
         elif any(col_lower.endswith(s) for s in MONEY_SUFFIXES):
-            df[col] = df[col].apply(lambda x: f'₹{x:,.2f}' if isinstance(x,(int,float)) and str(x) not in ['TOTAL','AVG',''] else x)
+            df[col] = df[col].apply(lambda x: f'₹{x:,.2f}' if _numeric(x) else ('' if isinstance(x, float) and pd.isna(x) else x))
     return df
 
 # Metric-name patterns → good/warn/bad thresholds, so a KPI card's color means
@@ -89,6 +98,13 @@ def _truncate_label(val, max_len=18):
 
 def render_kpi_cards(df, prev_df=None):
     if df is None or len(df)==0: return
+    # A no-GROUP-BY aggregate returns exactly ONE row of NULLs when nothing
+    # matched the filter. That reads as "1 result" with every value NaN, which
+    # is not zero — it means the selection has no data. Say that plainly rather
+    # than rendering a grid of "nan" or, worse, a misleading row of zeros.
+    if len(df) == 1 and all(pd.isna(df[c].iloc[0]) for c in df.columns):
+        st.info("No data for this facility and timeframe.")
+        return
     colors = ["kpi-sage","kpi-lavender","kpi-peach","kpi-amber","kpi-rose"]
     MONEY_SUFFIXES = ['_cost','_revenue','_paid','_amount','_value','_incentive','_procurement']
     PCT_SUFFIXES = ['_pct','_percent']
@@ -108,6 +124,8 @@ def render_kpi_cards(df, prev_df=None):
                 display = f"{val:,.2f}"
             else:
                 display = f"{int(val):,}"
+        elif pd.isna(val):
+            display = "—"
         else:
             display = str(val)
 

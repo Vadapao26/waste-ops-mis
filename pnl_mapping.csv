@@ -1,0 +1,128 @@
+category,pnl_line,confidence,n_rows,n_facilities,total_rs,note
+Logistics (Sales),,ASK,5,1,126160.0,DOUBLE-COUNT: outward.transportation_cost already covers outbound freight. Is this the same money?
+Logistics (Sale),,ASK,4,2,93440.0,DOUBLE-COUNT - same as above
+Infra Ops Expenses Petty Cash,,ASK,3,1,93242.82,"Rs 93,243. Petty cash pool - needs breaking down or a home"
+Debit Note,,ASK,3,1,74673.66,"Rs 74,674. Adjustment/credit - may not belong in P&L cost at all"
+Site Expenses - Ops & Infra,,ASK,2,1,56258.0,"Rs 56,258. Same problem"
+Logistics_BWG_Venodr,,ASK,1,1,54000.0,DOUBLE-COUNT + unclear: BWG vendor freight?
+Logistics (sales),,ASK,3,1,38600.0,DOUBLE-COUNT - same as above
+FS transportation cost,,ASK,5,1,35376.0,'FS' = field staff? finished stock? DOUBLE-COUNT risk
+Trading of Material,,ASK,1,1,24344.4,"Rs 24,344. Appears in BOTH expense and revenue tables - which side?"
+Logistics (Purchase),,ASK,1,1,21860.0,DOUBLE-COUNT: inward.transportation_cost already covers inbound freight
+Logistics(Sales),,ASK,4,3,13679.0,DOUBLE-COUNT - same as above
+Advance,,ASK,1,1,7500.0,"Rs 7,500. Advance payment - balance sheet, not P&L?"
+Material Purchase Cost,,ASK,1,1,2815.3,DOUBLE-COUNT: inward.value_of_accepted_material is the purchase cost source
+Transport Expense,,ASK,1,1,2589.0,DOUBLE-COUNT risk - which leg?
+Transportation Charges,,ASK,1,1,2500.0,DOUBLE-COUNT risk - which leg?
+Job Work Payment,Salaries - Contract staff,high,5,1,5199235.0,confirmed: contracted staff salaries
+Job work payment,Salaries - Contract staff,high,9,1,3173181.63,confirmed: contracted staff salaries
+Rent,Facility Rent,high,10,1,2620000.0,
+Field Staff Salary,Salaries - Operational staff,high,5,2,2301666.0,
+Staff salary,Salaries - Operational staff,high,15,1,1782250.0,
+Contract Labor Charges,Salaries - Contract staff,high,1,1,1139647.0,
+Entrepreneur salary,Salaries - Entrepreneur,high,30,3,1019000.0,
+Entrepreneur Salary,Salaries - Entrepreneur,high,31,4,805522.0,
+salary,Salaries - Operational staff,high,15,2,752289.0,
+Field staff salary,Salaries - Operational staff,high,16,1,587593.25,
+Filed staffs Salary,Salaries - Operational staff,high,16,1,420239.0,typo variant of Field staff salary
+Salary,Salaries - Operational staff,high,2,1,373072.0,
+Sorting staff salary,Salaries - Operational staff,high,26,1,328422.0,
+Electricity Charges,Electricity,high,8,1,287042.0,
+MS Binding Wire,Baling consumables,high,6,1,99616.0,
+Water Tanker Bill,Water,high,9,1,84150.0,
+Entrapaner salary,Salaries - Entrepreneur,high,3,1,83000.0,typo variant
+Pest Control Bill,Pest control,high,8,1,78692.0,
+Electricity,Electricity,high,22,3,71991.31,
+Tea Bill,Tea/coffee and snacks,high,3,1,70750.0,
+Tea/coffee,Tea/coffee and snacks,high,17,1,66560.0,
+Bale Patti Bill,Baling consumables,high,8,1,53269.0,
+Loading/Unloading,Loading and unloading,high,3,1,52200.0,
+Waste Collection from BWG,Waste collection from BWG,high,1,1,50000.0,line exists in the June P&L
+Loading and Unloading Expenses,Loading and unloading,high,11,4,47620.0,
+Tea Expenses,Tea/coffee and snacks,high,7,1,46178.0,
+Pest control,Pest control,high,9,4,41340.0,
+BioKleen Pest Control,Pest control,high,1,1,40000.0,vendor name
+Safety Shoes Bill,PPE,high,1,1,39648.0,
+Machine Maintenance - OPEX,Repair and Maintenance,high,4,1,38778.8,
+Green Cotton Coat Full sleeve,PPE,high,1,1,37170.0,workwear
+PPE - Safety Shoes,PPE,high,2,2,34290.0,
+Diesel for Forklift Expense,Machine transport and hire,high,5,1,34084.0,
+Crane Services,Machine transport and hire,high,3,1,33430.0,
+Field Staff Food,Tea/coffee and snacks,review,1,1,31680.0,"meals, not refreshments - own line?"
+Electricity bill,Electricity,high,11,1,31082.13,
+Waste Collection from BWG_IAM,Waste collection from BWG,high,1,1,26000.0,
+Tea and water,Tea/coffee and snacks,review,10,1,24016.0,mixes tea and water - lands in tea
+Bale patty,Baling consumables,high,13,1,23245.0,
+Tea/snacks,Tea/coffee and snacks,high,10,1,22741.0,
+Tea Coffee Expenses,Tea/coffee and snacks,high,16,1,22330.0,
+Electrical Items - OPEX,Repair and Maintenance,review,1,1,21476.0,"electrical spares - maintenance, not electricity supply"
+MS Wire Bill,Baling consumables,high,2,1,21055.1,
+Internet,Internet,high,26,3,20958.87,
+Weighing Bridge Charges,Weigh Bridge,high,5,1,20470.0,
+Porter Charges,Logistics (Porter/parcel),high,4,2,20229.0,
+Drinking Water Bill,Water,high,8,1,20125.0,
+PPE - Gloves,PPE,high,9,4,17643.0,
+Machine - Transportation Charges,Machine transport and hire,high,3,1,17500.0,
+Refilling of Fire Extinguishers,Repair and Maintenance,review,5,4,17170.0,safety compliance - own line?
+Consumables from Sri Sharada Provision Store,Toiletries and housekeeping,review,6,1,15336.0,vendor name only - provisions could be tea/snacks
+Tea & Snacks,Tea/coffee and snacks,high,13,1,14215.0,
+Loading/Unloading Charges,Loading and unloading,high,2,1,12000.0,
+Staff Travel Expense,Staff travel,high,7,1,10750.0,
+Pest Control,Pest control,high,3,1,10116.0,
+PPE,PPE,high,2,1,9660.0,
+Porter,Logistics (Porter/parcel),high,13,3,9338.0,
+D bags Purchase Cost,Baling consumables,high,1,1,7500.0,
+PPE -Masks,PPE,high,2,1,7482.0,
+Welding Charges,Repair and Maintenance,high,1,1,6975.0,
+Repair and maintenance,Repair and Maintenance,high,10,1,6203.0,
+Internet WiFi Bill,Internet,high,9,1,6123.2,
+Tea/Coffee/Snacks,Tea/coffee and snacks,high,2,1,6007.0,
+Water bil,Water,high,9,1,5880.0,typo variant
+Water Testing - OPEX,Water,review,1,1,5600.0,"compliance testing, not supply - split out?"
+Wi-Fi Bill,Internet,high,5,2,5461.26,
+Maintenance,Repair and Maintenance,high,2,1,5237.0,
+Wifi recharge,Internet,high,3,1,4531.0,
+Consumables - Petty Cash,Toiletries and housekeeping,review,2,1,4174.0,vague
+Butter milk,Tea/coffee and snacks,high,5,1,4145.0,
+Washroom Repair,Repair and Maintenance,high,2,1,3645.0,
+Water,Water,high,7,2,3375.0,
+Pest Control Expense,Pest control,high,3,1,3340.0,
+Gloves and Masks Expense,PPE,high,6,5,3010.0,
+Rodent Pest Control,Pest control,high,1,1,2900.0,
+Tea expenses,Tea/coffee and snacks,high,1,1,2800.0,
+Weighbridge,Weigh Bridge,high,5,4,2400.0,
+Domestic Things Purchase,Toiletries and housekeeping,review,5,1,2300.0,vague
+Weigh Bridge,Weigh Bridge,high,4,2,2160.0,
+D-Bags,Baling consumables,high,3,1,1814.0,
+Toiletries,Toiletries and housekeeping,high,5,2,1812.0,
+Stationary Items,Stationery,high,1,1,1691.0,
+Stationary items,Stationery,high,9,1,1475.0,
+PPE - Masks,PPE,high,5,3,1218.0,
+Petrol Expenses for XL Bike,Staff travel,high,3,1,1100.0,
+First Aid Kit Materials,PPE,review,1,1,1080.24,safety but not protective equipment
+Water bill,Water,high,1,1,1080.0,
+Temporary filed staff,Salaries - Operational staff,review,1,1,977.0,temp labour - operational or contract?
+JioAerFiber,Internet,review,1,1,807.0,ISP brand name - assuming broadband
+Other Petty Cash Expenses,Other expenses,review,1,1,790.0,catch-all by name
+Water Bill,Water,high,1,1,750.0,
+Stationery,Stationery,high,4,1,668.0,
+porter,Logistics (Porter/parcel),high,2,1,653.0,
+Drinking Water,Water,high,2,1,625.0,
+Other expense,Other expenses,review,2,1,559.0,catch-all by name
+Books and Handwash Liquid Bill,Toiletries and housekeeping,review,1,1,500.0,'books' suggests stationery too
+Enterprenuer Travel Expensive,Staff travel,review,1,1,500.0,typo variant; travel not salary
+Traveling expenses,Staff travel,high,1,1,404.0,
+Loading staff,Loading and unloading,review,1,1,400.0,staff cost but attached to loading
+Hand wash and sanitizer bill,Toiletries and housekeeping,high,1,1,400.0,
+Operations Expenses,Other expenses,review,1,1,380.0,too generic to place
+Snacks,Tea/coffee and snacks,high,1,1,350.0,
+Lockandkey,Stationery,review,1,1,300.0,"hardware, not stationery - could be maintenance"
+Stationary item,Stationery,high,2,2,300.0,
+rubber stamp and INK PAD,Stationery,high,1,1,280.0,
+Cleaning Equipment,Toiletries and housekeeping,high,1,1,250.0,
+Door key,Stationery,review,1,1,230.0,"hardware, not stationery - could be maintenance"
+Mask glouse small bags,PPE,review,1,1,180.0,typo; 'small bags' may be consumables not PPE
+Coffee,Tea/coffee and snacks,high,1,1,180.0,
+Housekeeping Expense,Toiletries and housekeeping,high,1,1,180.0,
+PP bags purchase,Baling consumables,high,1,1,135.0,
+Housekeeping,Toiletries and housekeeping,high,1,1,105.0,

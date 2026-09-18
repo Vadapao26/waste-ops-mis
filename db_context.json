@@ -14,7 +14,6 @@
       "vendor": [
         "received_material_from",
         "supplier",
-        "source",
         "collector",
         "aggregator",
         "pickup party"
@@ -102,6 +101,20 @@
         "trainees",
         "people trained",
         "headcount"
+      ],
+      "source_type": [
+        "source",
+        "waste source",
+        "source of waste",
+        "generator type",
+        "collection type",
+        "ULB",
+        "BWG",
+        "bulk waste generator",
+        "DWCC",
+        "waste picker",
+        "SHG",
+        "aggregator type"
       ]
     },
     "material_aliases": {
@@ -214,7 +227,8 @@
       "inward table: received_material_from=vendor, vendor_location=ward/area",
       "outward table: customer=buyer, destination=delivery location",
       "training table: trainer=conducted_by (normalized), topic=training topic, category=training category",
-      "training_attendees table: use for role-based and repeat attendee analysis"
+      "training_attendees table: use for role-based and repeat attendee analysis",
+      "inward table: source_type is the waste-source classification (ULB/BWG/DWCC/SHG/Waste Picker/Aggregators). The legacy `source` column is unreliable - blank at several facilities and holding a project name since July 2026 - never use it."
     ]
   },
   "Hebbagodi": {
