@@ -552,9 +552,10 @@ SIDEBAR_GROUPS = {
     "Training Analytics": ["training: topic analysis","training: trainer analysis","training: category analysis","training: role based attendance","training: repeat attendees"],
     "Environmental Impact": ["impact: inward kpi","impact: inward by source type","impact: inward by material category","impact: dispatch kpi","impact: dispatch by destination type","impact: dispatch by material category","impact: recovery rate trend","impact: vendor coverage","impact: transport ghg emissions","impact: network map"],
     "Supply Chain Analytics": ["supply chain: kpi summary","supply chain: inward rate rejection history","supply chain: outward rate rejection history"],
-    # Not a QUERY_LIBRARY entry — handled by pnl.py, same as the GHG and
-    # network-map views. Listed here so it appears in the sidebar.
-    "Financials": ["financials: profit and loss"],
+    # P&L automation parked 2026-09-18 — pnl.py / pnl_export.py / pnl_mapping.csv
+    # are still in the repo and fully working; re-adding the line below is all it
+    # takes to bring the view back.
+    # "Financials": ["financials: profit and loss"],
 }
 
 # The "run everything for this type" preset — shared between the main app's
