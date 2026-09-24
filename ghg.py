@@ -41,7 +41,7 @@ import re
 import pandas as pd
 from google.cloud import bigquery
 
-from distance_calc import load_entity_coordinates, distance_between
+from distance_calc import load_entity_coordinates, distance_between, load_distance_cache
 from vehicle_size import infer_vehicle_class
 
 INWARD_LOADING_TYPE = "loose"    # confirmed: inward material is always loose
@@ -60,6 +60,7 @@ def calculate_transport_emissions(client_and_dataset, facility: str, date_from: 
     totals. See module docstring for why these are separate."""
     client, dataset_ref = client_and_dataset
     coords = load_entity_coordinates(client_and_dataset)
+    road_cache = load_distance_cache(client_and_dataset)  # real road distances, where fetched
     empty_totals = {
         "total_kg_co2e": 0.0, "inward_kg_co2e": 0.0, "outward_kg_co2e": 0.0,
         "matched_tonnes": 0.0, "excluded_tonnes": 0.0, "excluded_trip_count": 0,
@@ -119,7 +120,7 @@ def calculate_transport_emissions(client_and_dataset, facility: str, date_from: 
                 continue
             total_tonnes = total_qty_kg / 1000.0
 
-            dist_km = distance_between(coords, facility, other_location, direction)
+            dist_km = distance_between(coords, facility, other_location, direction, road_cache=road_cache)
             if dist_km is None:
                 excluded_tonnes += total_tonnes
                 excluded_trip_count += 1
@@ -185,3 +186,68 @@ def calculate_transport_emissions(client_and_dataset, facility: str, date_from: 
                  "All trips matched to a geocoded location."),
     }
     return {"daily_breakdown": daily_breakdown, "summary_by_partner": summary_by_partner, "totals": totals}
+
+
+# ── ANALYTICS LAYER ───────────────────────────────────────────────────────────
+# Everything below is DERIVED from daily_breakdown — no new queries, no new
+# emission factors, no new assumptions. It exists because the raw total
+# ("you emitted N kg CO2e") is not actionable on its own: what makes it
+# actionable is intensity (kg CO2e per tonne moved), because that is the number
+# that can actually be improved, and it is comparable across facilities and
+# across months in a way a raw total never is.
+#
+# Intensity is computed as sum(kg_co2e) / sum(tonnes) on each group, NOT as the
+# mean of per-delivery intensities. Averaging ratios would weight a 50 kg
+# delivery the same as a 5-tonne one and quietly overstate the figure.
+def build_analytics(daily_breakdown):
+    """Returns dict of DataFrames: by_month, by_facility, by_vehicle_class,
+    by_material, plus a `headline` dict. Empty input gives empty frames."""
+    empty = {"by_month": pd.DataFrame(), "by_facility": pd.DataFrame(),
+             "by_vehicle_class": pd.DataFrame(), "by_material": pd.DataFrame(),
+             "headline": {"kg_per_tonne": 0.0, "total_tonnes": 0.0,
+                          "total_kg_co2e": 0.0, "n_deliveries": 0,
+                          "avg_distance_km": 0.0}}
+    if daily_breakdown is None or daily_breakdown.empty:
+        return empty
+
+    df = daily_breakdown.copy()
+    df["tonnes"] = pd.to_numeric(df["tonnes"], errors="coerce").fillna(0.0)
+    df["kg_co2e"] = pd.to_numeric(df["kg_co2e"], errors="coerce").fillna(0.0)
+    df["distance_km"] = pd.to_numeric(df.get("distance_km"), errors="coerce")
+    df["month"] = pd.to_datetime(df["date"], errors="coerce").dt.strftime("%Y-%m")
+
+    def _agg(keys):
+        g = df.groupby(keys, as_index=False).agg(
+            tonnes=("tonnes", "sum"),
+            kg_co2e=("kg_co2e", "sum"),
+            n_deliveries=("delivery_code", "nunique"),
+        )
+        # guard the denominator: a group with no tonnage has no meaningful
+        # intensity, and 0/0 should read as blank rather than as zero emissions
+        g["kg_co2e_per_tonne"] = (g["kg_co2e"] / g["tonnes"].replace(0, pd.NA)).round(2)
+        g["tonnes"] = g["tonnes"].round(3)
+        g["kg_co2e"] = g["kg_co2e"].round(2)
+        return g
+
+    by_month = _agg(["month", "direction"]).sort_values(["month", "direction"])
+    by_vehicle = _agg(["vehicle_class"]).sort_values("kg_co2e", ascending=False)
+    by_material = _agg(["material"]).sort_values("kg_co2e", ascending=False)
+    by_facility = (_agg(["facility"]).sort_values("kg_co2e", ascending=False)
+                   if "facility" in df.columns else pd.DataFrame())
+
+    total_t = float(df["tonnes"].sum())
+    total_kg = float(df["kg_co2e"].sum())
+    # distance is per DELIVERY, so de-duplicate before averaging — a delivery
+    # split across four materials is four rows but one truck journey
+    per_delivery = df.drop_duplicates(subset=["delivery_code"])
+    headline = {
+        "kg_per_tonne": round(total_kg / total_t, 2) if total_t else 0.0,
+        "total_tonnes": round(total_t, 3),
+        "total_kg_co2e": round(total_kg, 2),
+        "n_deliveries": int(df["delivery_code"].nunique()),
+        "avg_distance_km": round(float(per_delivery["distance_km"].mean()), 1)
+                           if per_delivery["distance_km"].notna().any() else 0.0,
+    }
+    return {"by_month": by_month, "by_facility": by_facility,
+            "by_vehicle_class": by_vehicle, "by_material": by_material,
+            "headline": headline}

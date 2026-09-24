@@ -27,6 +27,8 @@ import nlp_dates
 import reports
 import ghg
 import network_map
+import google_map
+import streamlit.components.v1 as st_components
 import pnl
 import pnl_export
 from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_GROUPS, ANALYSIS_TYPE_COMBINED
@@ -34,7 +36,7 @@ from queries import FACILITIES, MONTHS_FULL, MONTH_NUM, QUERY_LIBRARY, SIDEBAR_G
 st.set_page_config(page_title="Waste Ops MIS", layout="wide", initial_sidebar_state="expanded")
 theme.inject_global_css()
 
-BUILD_TAG = "2026-09-10-fix-plotly-warning-properly"  # bump this string every time files are handed off
+BUILD_TAG = "2026-09-19-google-maps-layer"  # bump this string every time files are handed off
 
 # ── AUTH ────────────────────────────────────────────────────────────────────
 def check_password(username, password):
@@ -712,9 +714,22 @@ def render_network_map_result(selected_facility: list):
         "won't appear here."
     )
     facility_filter = None if selected_facility == ["All Facilities"] else selected_facility
+
+    try:
+        js_api_key = st.secrets["google_maps"]["js_api_key"]
+    except Exception:
+        js_api_key = None
+
     with st.spinner(random.choice(theme.FUN_LOADING_MESSAGES)):
-        fig = network_map.build_network_map(BQ_CLIENT_AND_DATASET, facility_filter=facility_filter)
-    st.plotly_chart(fig, config={})
+        if js_api_key:
+            html = google_map.build_google_map_html(
+                BQ_CLIENT_AND_DATASET, js_api_key, facility_filter=facility_filter)
+            st_components.html(html, height=580)
+        else:
+            # No Maps JavaScript API key configured -- free OSM/Plotly map,
+            # same data, same shape, just different tiles.
+            fig = network_map.build_network_map(BQ_CLIENT_AND_DATASET, facility_filter=facility_filter)
+            st.plotly_chart(fig, config={})
 
 
 def render_ghg_transport_result(result: dict, display_time: str):
@@ -744,8 +759,74 @@ def render_ghg_transport_result(result: dict, display_time: str):
     daily = result["daily_breakdown"]
     summary = result["summary_by_partner"]
 
+    # ── 1 · Intensity and trend ──────────────────────────────────────────────
+    # A raw total isn't actionable; intensity (kg CO2e per tonne moved) is,
+    # because it's comparable across facilities and months and it's the number
+    # that can actually be improved. All derived from daily_breakdown — no new
+    # queries, no new emission factors.
+    an = ghg.build_analytics(daily)
+    h = an["headline"]
+    CHART = theme.PALETTE["chart"]
+
+    def _layout(fig, h_px=320, legend=False):
+        fig.update_layout(
+            height=h_px, margin=dict(l=8, r=8, t=36, b=8),
+            plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+            showlegend=legend,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+            font=dict(family="Inter, sans-serif", color=theme.PALETTE["ink"], size=12),
+            title_font=dict(size=13, color=theme.PALETTE["sub"]),
+            xaxis=dict(gridcolor=theme.PALETTE["border"], tickfont=dict(size=11)),
+            yaxis=dict(gridcolor=theme.PALETTE["border"], tickfont=dict(size=11)),
+        )
+        return fig
+
     st.markdown("---")
-    st.markdown("#### 1 · Daily breakdown")
+    st.markdown("#### 1 · Intensity and trend")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Emissions intensity", f"{h['kg_per_tonne']:,.2f} kg CO2e/t")
+    k2.metric("Tonnes moved", f"{h['total_tonnes']:,.2f} t")
+    k3.metric("Deliveries", f"{h['n_deliveries']:,}")
+    k4.metric("Average trip", f"{h['avg_distance_km']:,.1f} km")
+    st.caption("Intensity is total emissions ÷ total tonnes, weighted by tonnage — "
+               "not an average of per-delivery ratios, which would let a 50 kg "
+               "drop-off count as heavily as a 5-tonne load.")
+
+    bm = an["by_month"]
+    if not bm.empty:
+        c1, c2 = st.columns(2)
+        with c1:
+            fig = px.bar(bm, x="month", y="kg_co2e", color="direction", barmode="group",
+                         title="Emissions by month", color_discrete_sequence=CHART)
+            fig.update_yaxes(title_text="kg CO2e")
+            st.plotly_chart(_layout(fig, legend=True), width='stretch')
+        with c2:
+            fig = px.line(bm.dropna(subset=["kg_co2e_per_tonne"]), x="month",
+                          y="kg_co2e_per_tonne", color="direction", markers=True,
+                          title="Intensity by month", color_discrete_sequence=CHART)
+            fig.update_yaxes(title_text="kg CO2e per tonne")
+            st.plotly_chart(_layout(fig, legend=True), width='stretch')
+        st.caption("Two charts rather than one with two scales — emissions and "
+                   "intensity share no unit, and a dual axis would invite a "
+                   "comparison that isn't there.")
+
+    bf = an["by_facility"]
+    if not bf.empty and len(bf) > 1:
+        fig = px.bar(bf.sort_values("kg_co2e_per_tonne"), x="kg_co2e_per_tonne", y="facility",
+                     orientation="h", title="Emissions intensity by facility",
+                     color_discrete_sequence=[CHART[0]], hover_data=["tonnes", "kg_co2e"])
+        fig.update_xaxes(title_text="kg CO2e per tonne"); fig.update_yaxes(title_text="")
+        st.plotly_chart(_layout(fig, h_px=max(240, 40 * len(bf) + 120)), width='stretch')
+
+    bv = an["by_vehicle_class"]
+    if not bv.empty:
+        with st.expander("By vehicle class and material"):
+            a_, b_ = st.columns(2)
+            a_.dataframe(bv, width='stretch', hide_index=True)
+            b_.dataframe(an["by_material"], width='stretch', hide_index=True)
+
+    st.markdown("---")
+    st.markdown("#### 2 · Daily breakdown")
     st.caption("Every real delivery, on its own date — nothing here is summed across days.")
     if daily.empty:
         st.info("No deliveries found for this facility/timeframe.")
@@ -765,7 +846,7 @@ def render_ghg_transport_result(result: dict, display_time: str):
                 st.dataframe(outward_daily, width='stretch', hide_index=True)
 
     st.markdown("---")
-    st.markdown("#### 2 · Overall summary, by vendor/customer")
+    st.markdown("#### 3 · Overall summary, by vendor/customer")
     st.caption("Aggregated on purpose — delivery count shown so it's clear each row can represent multiple trips.")
     if summary.empty:
         st.info("No deliveries found for this facility/timeframe.")

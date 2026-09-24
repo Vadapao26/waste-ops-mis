@@ -16,3 +16,7 @@ credentials.json
 *_audit*.txt
 query_diagnosis.txt
 pnl_data/
+bq_snapshots/
+smoke_ghg.py
+smoke_maps.py
+smoke_maps2.py

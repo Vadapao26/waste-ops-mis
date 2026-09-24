@@ -33,10 +33,16 @@ applies before computing distance:
 """
 import os
 import math
+from datetime import datetime, timezone
 import pandas as pd
+import requests
 from google.cloud import bigquery
 
 CIRCUITY_FACTOR = 1.35
+
+# -- Real road distance via Google Routes API (optional -- see below) --
+ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
+GEO_ROUND = 6  # ~11cm precision when rounding a coordinate for cache lookups
 FALLBACK_RADIUS_KM = 7.55  # median across all multi-office PINs -- used only
                             # for a PIN with just one office, where no
                             # real spread can be computed at all
@@ -133,10 +139,19 @@ def resolve_entity_coords(coords: dict, entity_name: str, entity_direction: str,
     return entry["direct"] or entry["pin"]
 
 
-def distance_between(coords: dict, facility: str, entity_name: str, entity_direction: str):
+def distance_between(coords: dict, facility: str, entity_name: str, entity_direction: str, road_cache: dict = None):
     """Computes distance for one trip between `facility` (always uses its
     own precise coordinates) and `entity_name` (resolved per the business
-    rules above). Returns None if either side has no usable coordinates."""
+    rules above). Returns None if either side has no usable coordinates.
+
+    road_cache: optional {(o_lat,o_lon,d_lat,d_lon): distance_km} from
+    load_distance_cache(). When a REAL road distance has already been
+    fetched for this exact pair (via refresh_road_distances.py), it is
+    used instead of the haversine x circuity estimate below. A pair the
+    cache has not reached yet -- because the backfill script has not run
+    for it, or no Google Maps API key is configured at all -- silently
+    falls through to the same estimate this function has always used.
+    Nothing breaks and nothing is blocked on the cache being complete."""
     facility_entry = coords.get((facility, "facility"))
     if facility_entry is None:
         return None
@@ -151,6 +166,11 @@ def distance_between(coords: dict, facility: str, entity_name: str, entity_direc
     lat1, lng1, pin1 = facility_coord
     lat2, lng2, pin2 = other_coord
 
+    if road_cache:
+        cached = road_cache.get(_cache_key(lat1, lng1, lat2, lng2))
+        if cached is not None:
+            return cached
+
     if lat1 == lat2 and lng1 == lng2:
         # Exactly the same point -- use that PIN's real area radius as a
         # realistic minimum rather than a literal, meaningless 0km.
@@ -161,3 +181,106 @@ def distance_between(coords: dict, facility: str, entity_name: str, entity_direc
         # precise coordinates instead of the coarse same-PIN floor.
         return estimate_road_distance_km(lat1, lng1, lat2, lng2)
     return estimate_road_distance_km(lat1, lng1, lat2, lng2)
+
+
+# ── Real road distance: Google Routes API + a BigQuery-backed cache ────────
+# Real road distance is billed per lookup, so it is only ever fetched by
+# refresh_road_distances.py (a standalone, manually-run backfill script) --
+# never on a live page load. Distances only depend on (origin, destination)
+# coordinate pairs, which are static, so each unique pair is looked up ONCE
+# and reused forever after via this cache. distance_between() above reads
+# the cache; it never calls the API itself.
+
+def _cache_key(lat1, lng1, lat2, lng2):
+    """Rounds a coordinate pair for cache lookups. Direction matters (A->B
+    is not assumed equal to B->A) -- one-way streets and routing
+    asymmetries make that a real difference, not just noise."""
+    return (round(lat1, GEO_ROUND), round(lng1, GEO_ROUND),
+            round(lat2, GEO_ROUND), round(lng2, GEO_ROUND))
+
+
+def load_distance_cache(client_and_dataset) -> dict:
+    """Loads every previously-fetched road distance from ghg_distance_cache
+    into a {(o_lat,o_lon,d_lat,d_lon): distance_km} lookup. Returns an
+    empty dict (not an error) if the table doesn't exist yet -- e.g. before
+    refresh_road_distances.py has ever been run, or if no Maps API key has
+    ever been configured. Callers should treat an empty cache exactly like
+    "no real road distances available yet", not like a failure."""
+    client, dataset_ref = client_and_dataset
+    try:
+        job_config = bigquery.QueryJobConfig(default_dataset=dataset_ref)
+        df = client.query(
+            "SELECT origin_lat, origin_lon, dest_lat, dest_lon, distance_km "
+            "FROM ghg_distance_cache",
+            job_config=job_config,
+        ).to_dataframe()
+        return {
+            _cache_key(r.origin_lat, r.origin_lon, r.dest_lat, r.dest_lon): r.distance_km
+            for r in df.itertuples()
+        }
+    except Exception:
+        return {}
+
+
+def fetch_road_distance_km(api_key: str, lat1: float, lng1: float, lat2: float, lng2: float):
+    """Calls the Google Routes API for ONE origin-destination pair and
+    returns real road distance in km, or None on any failure (bad key,
+    rate limit, network error, no route found) -- this never raises, so
+    one bad lookup in a backfill run of hundreds can't take the rest down."""
+    try:
+        resp = requests.post(
+            ROUTES_API_URL,
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": api_key,
+                "X-Goog-FieldMask": "routes.distanceMeters",
+            },
+            json={
+                "origin": {"location": {"latLng": {"latitude": lat1, "longitude": lng1}}},
+                "destination": {"location": {"latLng": {"latitude": lat2, "longitude": lng2}}},
+                "travelMode": "DRIVE",
+                "routingPreference": "TRAFFIC_UNAWARE",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        routes = resp.json().get("routes", [])
+        if not routes or "distanceMeters" not in routes[0]:
+            return None
+        return round(routes[0]["distanceMeters"] / 1000.0, 2)
+    except Exception:
+        return None
+
+
+def write_distance_cache_rows(client_and_dataset, rows: list):
+    """Appends newly-fetched (origin_lat, origin_lon, dest_lat, dest_lon,
+    distance_km) tuples to ghg_distance_cache, creating the table on first
+    use. Only ever appends: refresh_road_distances.py is responsible for
+    skipping pairs load_distance_cache() already returned, so this never
+    needs to upsert or de-duplicate anything itself."""
+    if not rows:
+        return
+    client, dataset_ref = client_and_dataset
+    table_ref = f"{client.project}.{dataset_ref.dataset_id}.ghg_distance_cache"
+    schema = [
+        bigquery.SchemaField("origin_lat", "FLOAT64"),
+        bigquery.SchemaField("origin_lon", "FLOAT64"),
+        bigquery.SchemaField("dest_lat", "FLOAT64"),
+        bigquery.SchemaField("dest_lon", "FLOAT64"),
+        bigquery.SchemaField("distance_km", "FLOAT64"),
+        bigquery.SchemaField("fetched_at", "TIMESTAMP"),
+    ]
+    try:
+        client.get_table(table_ref)
+    except Exception:
+        client.create_table(bigquery.Table(table_ref, schema=schema))
+
+    now = datetime.now(timezone.utc).isoformat()
+    payload = [
+        {"origin_lat": r[0], "origin_lon": r[1], "dest_lat": r[2], "dest_lon": r[3],
+         "distance_km": r[4], "fetched_at": now}
+        for r in rows
+    ]
+    errors = client.insert_rows_json(table_ref, payload)
+    if errors:
+        raise RuntimeError(f"Failed to write distance cache rows: {errors}")
